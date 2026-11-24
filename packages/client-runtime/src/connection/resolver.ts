@@ -48,6 +48,7 @@ import {
   appendOrchestrationProtocol,
   orchestrationProtocolCompatibilityError,
 } from "./compatibility.ts";
+import { withCredentialRevision } from "./credentialRevision.ts";
 import { credentialConnectionId } from "./routes.ts";
 import { takeSharedEnvironmentDescriptor } from "../environment/descriptor.ts";
 
@@ -163,13 +164,15 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
     if (!isBearerCredential(credential)) {
       return yield* credentialMissingError(target.connectionId);
     }
-    const authorized = yield* remote.authorizeBearer({
-      expectedEnvironmentId: target.environmentId,
-      httpBaseUrl: profile.httpBaseUrl,
-      wsBaseUrl: profile.wsBaseUrl,
-      bearerToken: credential.token,
-      connectionMethod: "direct",
-    });
+    const authorized = yield* remote
+      .authorizeBearer({
+        expectedEnvironmentId: target.environmentId,
+        httpBaseUrl: profile.httpBaseUrl,
+        wsBaseUrl: profile.wsBaseUrl,
+        bearerToken: credential.token,
+        connectionMethod: "direct",
+      })
+      .pipe(Effect.mapError((failure) => withCredentialRevision(failure, credential.token)));
     return {
       ...authorized,
       target,

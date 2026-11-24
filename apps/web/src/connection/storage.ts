@@ -458,6 +458,54 @@ function removeDatabaseValuesInRange(
   );
 }
 
+export type CatalogWriteGuard =
+  | { readonly _tag: "Register"; readonly environmentId: EnvironmentId; readonly since: bigint }
+  | { readonly _tag: "Remove"; readonly environmentId: EnvironmentId; readonly at: bigint };
+
+const catalogRemovalKey = (environmentId: EnvironmentId) =>
+  `${CATALOG_KEY}:removed:${environmentId}`;
+
+const parseRemovedAt = (value: unknown): bigint | null =>
+  typeof value === "string" && /^\d+$/.test(value) ? BigInt(value) : null;
+
+function writeGuardedCatalogOnConnection(
+  database: IDBDatabase,
+  raw: string,
+  guard: CatalogWriteGuard,
+) {
+  return Effect.callback<boolean, ConnectionTransientError>((resume) => {
+    try {
+      const transaction = database.transaction(CATALOG_STORE_NAME, "readwrite");
+      const store = transaction.objectStore(CATALOG_STORE_NAME);
+      const removalKey = catalogRemovalKey(guard.environmentId);
+      let written = false;
+      transaction.addEventListener("abort", () => {
+        resume(
+          Effect.fail(catalogError("write", transaction.error ?? "Unknown IndexedDB write error")),
+        );
+      });
+      transaction.addEventListener("complete", () => {
+        resume(Effect.succeed(written));
+      });
+      if (guard._tag === "Remove") {
+        store.put(raw, CATALOG_KEY);
+        store.put(String(guard.at), removalKey);
+        written = true;
+        return;
+      }
+      const removal = store.get(removalKey);
+      removal.addEventListener("success", () => {
+        const removedAt = parseRemovedAt(removal.result);
+        if (removedAt !== null && removedAt >= guard.since) return;
+        store.put(raw, CATALOG_KEY);
+        written = true;
+      });
+    } catch (cause) {
+      resume(Effect.fail(catalogError("write", cause)));
+    }
+  }).pipe(Effect.withSpan("web.connectionStorage.writeGuardedCatalog"));
+}
+
 function threadCacheKey(environmentId: EnvironmentId, threadId: ThreadId) {
   return `${environmentId}:${threadId}`;
 }
@@ -491,6 +539,10 @@ const encodeCatalog = Effect.fn("web.connectionStorage.encodeCatalog")(function*
 export interface CatalogBackend {
   readonly read: Effect.Effect<string | null, ConnectionTransientError>;
   readonly write: (raw: string) => Effect.Effect<void, ConnectionTransientError>;
+  readonly writeGuarded?: (
+    raw: string,
+    guard: CatalogWriteGuard,
+  ) => Effect.Effect<boolean, ConnectionTransientError>;
   readonly quarantine?: (raw: string) => Effect.Effect<void, ConnectionTransientError>;
 }
 
@@ -526,6 +578,8 @@ export function makeCatalogBackend(database: DatabaseHandle): CatalogBackend {
       Effect.map((value) => (typeof value === "string" ? value : null)),
     ),
     write: (raw) => writeDatabaseValue(database, CATALOG_STORE_NAME, CATALOG_KEY, raw),
+    writeGuarded: (raw, guard) =>
+      withDatabase(database, (opened) => writeGuardedCatalogOnConnection(opened, raw, guard)),
     quarantine: (raw) =>
       writeDatabaseValue(database, CATALOG_STORE_NAME, `${CATALOG_KEY}:corrupt:${Date.now()}`, raw),
   };
@@ -536,6 +590,10 @@ interface CatalogStore {
   readonly update: (
     transform: (catalog: ConnectionCatalogDocumentType) => ConnectionCatalogDocumentType,
   ) => Effect.Effect<void, ConnectionTransientError>;
+  readonly updateGuarded: (
+    transform: (catalog: ConnectionCatalogDocumentType) => ConnectionCatalogDocumentType,
+    guard: CatalogWriteGuard,
+  ) => Effect.Effect<boolean, ConnectionTransientError>;
 }
 
 export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStore")(function* (
@@ -597,7 +655,24 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
     },
   );
 
-  return { read, update } satisfies CatalogStore;
+  const updateGuarded: CatalogStore["updateGuarded"] = Effect.fn(
+    "web.connectionStorage.updateCatalogGuarded",
+  )(function* (transform, guard) {
+    return yield* lock.withPermits(1)(
+      Effect.gen(function* () {
+        const next = transform(yield* loadUnlocked());
+        const encoded = yield* encodeCatalog(next);
+        const written =
+          backend.writeGuarded === undefined
+            ? yield* backend.write(encoded).pipe(Effect.as(true))
+            : yield* backend.writeGuarded(encoded, guard);
+        if (written) yield* Ref.set(state, Option.some(next));
+        return written;
+      }),
+    );
+  });
+
+  return { read, update, updateGuarded } satisfies CatalogStore;
 });
 
 // The stored names predate the rename and stay, so a tab still on an older version and an
@@ -750,19 +825,36 @@ export const layer = Layer.effectContext(
       ),
     });
     const registrationStore = Persistence.ConnectionRegistrationStore.of({
-      register: Effect.fn("Persistence.ConnectionRegistrationStore.register")(function (
+      register: Effect.fn("Persistence.ConnectionRegistrationStore.register")(function* (
         registration,
         routes,
         alongside = [],
+        unlessRemovedSince,
       ) {
-        return catalog
-          .update((document) =>
-            [registration, ...alongside].reduce(
-              (next, each) => registerConnectionInCatalog(next, each, routes),
-              document,
-            ),
-          )
+        const transform = (document: ConnectionCatalogDocumentType) =>
+          [registration, ...alongside].reduce(
+            (next, each) => registerConnectionInCatalog(next, each, routes),
+            document,
+          );
+        if (unlessRemovedSince === undefined) {
+          return yield* catalog
+            .update(transform)
+            .pipe(Effect.mapError(asPersistenceError("register-connection")));
+        }
+        const written = yield* catalog
+          .updateGuarded(transform, {
+            _tag: "Register",
+            environmentId: registration.target.environmentId,
+            since: unlessRemovedSince,
+          })
           .pipe(Effect.mapError(asPersistenceError("register-connection")));
+        if (!written) {
+          return yield* new ConnectionBlockedError({
+            reason: "configuration",
+            failureCause: "environment_removed",
+            detail: "This environment was removed while it was being paired.",
+          });
+        }
       }),
       setRoutes: Effect.fn("Persistence.ConnectionRegistrationStore.setRoutes")(
         function (environmentId, routes) {
@@ -771,11 +863,19 @@ export const layer = Layer.effectContext(
             .pipe(Effect.mapError(asPersistenceError("set-connection-routes")));
         },
       ),
-      remove: Effect.fn("Persistence.ConnectionRegistrationStore.remove")(function (environmentId) {
-        return catalog
-          .update((document) => removeConnectionFromCatalog(document, environmentId))
-          .pipe(Effect.mapError(asPersistenceError("remove-connection")));
-      }),
+      remove: Effect.fn("Persistence.ConnectionRegistrationStore.remove")(
+        function (environmentId, removedAt) {
+          const transform = (document: ConnectionCatalogDocumentType) =>
+            removeConnectionFromCatalog(document, environmentId);
+          return (
+            removedAt === undefined
+              ? catalog.update(transform)
+              : catalog
+                  .updateGuarded(transform, { _tag: "Remove", environmentId, at: removedAt })
+                  .pipe(Effect.asVoid)
+          ).pipe(Effect.mapError(asPersistenceError("remove-connection")));
+        },
+      ),
       setEnabled: Effect.fn("Persistence.ConnectionRegistrationStore.setEnabled")(
         function (environmentId, enabled) {
           return catalog

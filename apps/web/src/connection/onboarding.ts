@@ -23,6 +23,19 @@ export const connectPairing = createRuntimeCommand(connectionAtomRuntime, {
     ),
 });
 
+export const commitPairing = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web:connection:commit-pairing",
+  scheduler: onboardingScheduler,
+  concurrency: {
+    mode: "singleFlight",
+    key: (input: ConnectionOnboarding.PairingConnectionInput) => JSON.stringify(input),
+  },
+  execute: (input: ConnectionOnboarding.PairingConnectionInput) =>
+    ConnectionOnboarding.ConnectionOnboarding.pipe(
+      Effect.flatMap((onboarding) => onboarding.commitPairing(input)),
+    ),
+});
+
 export const connectSshEnvironment = createRuntimeCommand(connectionAtomRuntime, {
   label: "web:connection:connect-ssh",
   scheduler: onboardingScheduler,

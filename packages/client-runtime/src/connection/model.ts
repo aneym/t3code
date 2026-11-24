@@ -89,6 +89,7 @@ export const ConnectionFailureCause = Schema.Literals([
   "tunnel_not_enabled",
   "chat_session_forbidden",
   "environment_removed",
+  "environment_platform_managed",
 ]);
 export type ConnectionFailureCause = typeof ConnectionFailureCause.Type;
 
@@ -136,7 +137,7 @@ export class ConnectionBlockedError extends Schema.TaggedError<ConnectionBlocked
     detail: Schema.String,
     traceId: Schema.optionalKey(Schema.String),
     ...ConnectionFailureFields,
-
+    credentialRevision: Schema.optionalKey(Schema.String),
     serverUpdateRequired: Schema.optionalKey(Schema.Boolean),
   },
 ) {

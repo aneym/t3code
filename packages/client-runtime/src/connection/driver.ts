@@ -15,6 +15,7 @@ import type {
   ConnectionAttemptStage,
   PreparedConnection,
 } from "./model.ts";
+import { withCredentialRevision } from "./credentialRevision.ts";
 import { ConnectionBlockedError, ConnectionTransientError } from "./model.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import {
@@ -71,7 +72,7 @@ export class ConnectionDriver extends Context.Service<
   }
 >()("@t3tools/client-runtime/connection/driver/ConnectionDriver") {}
 
-const withRouteKind = (
+export const withRouteKind = (
   failure: ConnectionAttemptError,
   route: ConnectionRoute,
 ): ConnectionAttemptError => {
@@ -81,6 +82,14 @@ const withRouteKind = (
     ? new ConnectionTransientError({ ...failure, routeKind })
     : new ConnectionBlockedError({ ...failure, routeKind });
 };
+
+const withPreparedCredential = (
+  failure: ConnectionAttemptError,
+  prepared: PreparedConnection,
+): ConnectionAttemptError =>
+  prepared.httpAuthorization?._tag === "Bearer"
+    ? withCredentialRevision(failure, prepared.httpAuthorization.token)
+    : failure;
 
 export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")(function* <R>(
   entry: ConnectionCatalogEntry,
@@ -233,9 +242,13 @@ export const make = Effect.gen(function* () {
         yield* reportProgress({ stage: "preparing" });
         const prepared = yield* resolver.prepare(routeEntry(entry, route));
         yield* reportProgress({ stage: "opening", prepared });
-        const session = yield* sessions.connect(prepared);
+        const session = yield* sessions
+          .connect(prepared)
+          .pipe(Effect.mapError((failure) => withPreparedCredential(failure, prepared)));
         yield* reportProgress({ stage: "synchronizing", prepared });
-        yield* session.ready;
+        yield* session.ready.pipe(
+          Effect.mapError((failure) => withPreparedCredential(failure, prepared)),
+        );
         // The server closes a socket when its session expires, unless the same key renewed it.
         if (prepared.httpAuthorization?._tag === "Dpop") {
           yield* remote

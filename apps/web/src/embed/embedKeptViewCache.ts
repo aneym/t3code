@@ -1,4 +1,5 @@
 import {
+  ClientCapabilities,
   Persistence,
   StoredOrchestrationThreadSnapshot,
   makeStoredThreadSnapshotEncoder,
@@ -16,6 +17,7 @@ import {
   KEPT_VIEW_LIMITS,
   clearKeptViewsFor,
   loadKeptView,
+  refuseKeptViews,
   removeKeptView,
   saveKeptView,
 } from "./embedKeptViews";
@@ -108,3 +110,17 @@ const makeKeptViewCache = Effect.fn("EmbedKeptViewCache.make")(function* () {
 });
 
 export const layer = Layer.effect(Persistence.EnvironmentCacheStore, makeKeptViewCache());
+
+const recordRefusal = Effect.fn("EmbedKeptViewCache.recordRefusal")(function* (
+  environmentId: EnvironmentId,
+  credentialRevision: string,
+) {
+  if (!inEmbedPage()) return;
+  yield* Effect.promise(() =>
+    refuseKeptViews(environmentId, credentialRevision).catch(() => undefined),
+  );
+});
+
+export const layerConnectionRefusals = Layer.succeed(ClientCapabilities.ConnectionRefusals, {
+  record: recordRefusal,
+});

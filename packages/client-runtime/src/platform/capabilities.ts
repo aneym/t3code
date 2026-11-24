@@ -51,6 +51,15 @@ export class AnalyticsDevice extends Context.Reference<{
   defaultValue: () => ({ id: Effect.succeedNone }),
 }) {}
 
+export class ConnectionRefusals extends Context.Reference<{
+  readonly record: (
+    environmentId: EnvironmentId,
+    credentialRevision: string,
+  ) => Effect.Effect<void>;
+}>("@t3tools/client-runtime/platform/capabilities/ConnectionRefusals", {
+  defaultValue: () => ({ record: () => Effect.void }),
+}) {}
+
 export class ClientPresentation extends Context.Service<
   ClientPresentation,
   {

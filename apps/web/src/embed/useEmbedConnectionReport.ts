@@ -16,6 +16,7 @@ import { postToEmbedHost, useEmbedHostConnected } from "./embedHost";
 import { embedFailureCodes } from "./embedFailureCodes";
 import { embedConnectionRefused } from "./embedKeptViewGate";
 import { EMBED_CONNECTION_MESSAGE, type EmbedConnectionReport } from "./embedProtocol";
+import { savedAccessAtom } from "./useEmbedKeptView";
 
 const connectionReportAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get): string | null => {
@@ -36,6 +37,20 @@ const connectionReportAtom = Atom.family((environmentId: EnvironmentId) =>
     const prepared = Option.getOrNull(
       get(environmentSession.preparedConnectionValueAtom(environmentId)),
     );
+    const access = get(savedAccessAtom(environmentId));
+    if (access === "refused" && !embedConnectionRefused(state)) {
+      return report({
+        phase: "refused",
+        reason: "permission",
+        hop: "server",
+        failureCause: "chat_session_forbidden",
+        httpStatus: null,
+        routeKind: null,
+      });
+    }
+    if (access === "unknown" && state.phase === "connected") {
+      return report({ phase: "connecting", ...embedFailureCodes(null) });
+    }
     const failure = state.phase === "connected" ? null : state.lastFailure;
     const codes = embedFailureCodes(failure);
     const route =
