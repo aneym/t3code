@@ -14,7 +14,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { FetchHttpClient, HttpClient, HttpClientError, type HttpClientResponse } from "effect/http";
+import * as Stream from "effect/Stream";
+import { FetchHttpClient, HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
@@ -90,9 +91,56 @@ const remoteApiBaseUrl = (httpBaseUrl: string): string => {
   return url.toString();
 };
 
+const FORBIDDEN_BODY_LIMIT_BYTES = 4096;
+
+const readCappedBody = (response: HttpClientResponse.HttpClientResponse) =>
+  Effect.suspend(() => {
+    const chunks: Array<Uint8Array> = [];
+    let size = 0;
+    return response.stream.pipe(
+      Stream.runForEachWhile((chunk) =>
+        Effect.sync(() => {
+          size += chunk.byteLength;
+          if (size <= FORBIDDEN_BODY_LIMIT_BYTES) chunks.push(chunk);
+          return size <= FORBIDDEN_BODY_LIMIT_BYTES;
+        }),
+      ),
+      Effect.map(() => {
+        const body = new Uint8Array(size <= FORBIDDEN_BODY_LIMIT_BYTES ? size : 0);
+        if (size > FORBIDDEN_BODY_LIMIT_BYTES) return body;
+        let offset = 0;
+        for (const chunk of chunks) {
+          body.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+        return body;
+      }),
+      Effect.orElseSucceed(() => new Uint8Array(0)),
+    );
+  });
+
+const capForbiddenBody = (
+  response: HttpClientResponse.HttpClientResponse,
+): Effect.Effect<HttpClientResponse.HttpClientResponse> =>
+  response.status !== 403
+    ? Effect.succeed(response)
+    : Effect.map(readCappedBody(response), (body) => {
+        const headers = new Headers(Object.entries(response.headers));
+        headers.delete("content-encoding");
+        headers.set("content-length", String(body.byteLength));
+        return HttpClientResponse.fromWeb(
+          response.request,
+          new Response(body.byteLength === 0 ? null : body, { status: 403, headers }),
+        );
+      });
+
+const withCappedForbiddenBodies = <E, R>(client: HttpClient.HttpClient.With<E, R>) =>
+  HttpClient.transformResponse(client, Effect.flatMap(capForbiddenBody));
+
 export const makeEnvironmentHttpApiClient = (httpBaseUrl: string) =>
   HttpApiClient.make(EnvironmentHttpApi, {
     baseUrl: remoteApiBaseUrl(httpBaseUrl),
+    transformClient: withCappedForbiddenBodies,
   });
 
 export const makeEnvironmentHttpApiGroupClient = <
@@ -103,7 +151,7 @@ export const makeEnvironmentHttpApiGroupClient = <
 ) =>
   Effect.flatMap(HttpClient.HttpClient, (httpClient) =>
     HttpApiClient.group(EnvironmentHttpApi, {
-      httpClient,
+      httpClient: withCappedForbiddenBodies(httpClient),
       group,
       baseUrl: remoteApiBaseUrl(httpBaseUrl),
     }),
@@ -114,7 +162,6 @@ export const makeEnvironmentHttpApiUrlBuilder = (httpBaseUrl: string) =>
     baseUrl: remoteApiBaseUrl(httpBaseUrl),
   });
 
-const REFUSAL_BODY_LIMIT_BYTES = 4096;
 const WEBSOCKET_TICKET_PATH = /\/api\/auth\/websocket-ticket(?:\/[^/]+)?$/;
 
 export const isWebSocketTicketUrl = (requestUrl: string): boolean => {
@@ -125,11 +172,19 @@ export const isWebSocketTicketUrl = (requestUrl: string): boolean => {
   }
 };
 
-const boundedText = (response: HttpClientResponse.HttpClientResponse) => {
-  const length = Number(response.headers["content-length"]);
-  return Number.isInteger(length) && length >= 0 && length <= REFUSAL_BODY_LIMIT_BYTES
-    ? response.text
-    : Effect.succeed("");
+const parseRefusalCode = (text: string): string | undefined => {
+  try {
+    const body: unknown = JSON.parse(text);
+    return typeof body === "object" &&
+      body !== null &&
+      "code" in body &&
+      typeof body.code === "string" &&
+      body.code.length <= 64
+      ? body.code
+      : undefined;
+  } catch {
+    return undefined;
+  }
 };
 
 const refusalCode = (
@@ -137,16 +192,8 @@ const refusalCode = (
   response: HttpClientResponse.HttpClientResponse,
 ): Effect.Effect<string | undefined> =>
   response.status === 403 && isWebSocketTicketUrl(requestUrl)
-    ? boundedText(response).pipe(
-        Effect.map((text) => {
-          const body: unknown = JSON.parse(text);
-          return typeof body === "object" &&
-            body !== null &&
-            "code" in body &&
-            typeof body.code === "string"
-            ? body.code
-            : undefined;
-        }),
+    ? response.text.pipe(
+        Effect.map(parseRefusalCode),
         Effect.orElseSucceed(() => undefined),
       )
     : Effect.undefined;
