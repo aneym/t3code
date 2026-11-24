@@ -36,6 +36,8 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { deviceHostEnvironment, hubEnvironment } from "./localDeviceEnvironment.ts";
 import { releaseAgentDeviceSession } from "./AgentDeviceTarget.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
@@ -180,81 +182,6 @@ const androidSdk = Effect.gen(function* () {
   return { root: null, adb: false, emulator: false, avdmanager: false, legacyAvdmanager: false };
 });
 
-const deviceHostEnvironment = (
-  environment: NodeJS.ProcessEnv,
-  sdkRoot: string | null,
-  hostPlatform: NodeJS.Platform,
-  path: Path.Path,
-): NodeJS.ProcessEnv => {
-  return sdkRoot
-    ? {
-        ...environment,
-        ANDROID_HOME: sdkRoot,
-        PATH: [
-          path.join(sdkRoot, "platform-tools"),
-          path.join(sdkRoot, "emulator"),
-          environment.PATH ?? environment.Path ?? "",
-        ].join(hostPlatform === "win32" ? ";" : ":"),
-      }
-    : environment;
-};
-
-const hubEnvironment = Effect.fn("LocalDeviceHost.hubEnvironment")(function* (
-  environment: NodeJS.ProcessEnv,
-) {
-  const env: NodeJS.ProcessEnv = { ...environment, FORCE_COLOR: "0", NO_COLOR: "1" };
-  const platform = yield* HostProcess.Platform;
-  const uid = yield* HostProcess.UserId;
-  if (env.ANDROID_HOME) {
-    const path = yield* Path.Path;
-    const runner = yield* ProcessRunner.ProcessRunner;
-    const emulator = path.join(
-      env.ANDROID_HOME,
-      "emulator",
-      platform === "win32" ? "emulator.exe" : "emulator",
-    );
-    const cameraArgs = yield* Effect.forEach(["front", "back"], (facing) =>
-      runner
-        .run({
-          command: emulator,
-          args: [`-help-camera-${facing}`],
-          env,
-          timeout: Duration.seconds(5),
-        })
-        .pipe(
-          Effect.map((result) => {
-            const help = `${result.stdout}\n${result.stderr}`;
-            // The hub wires imagefile cameras unconditionally; older SDK emulators reject that mode.
-            return result.code === 0 && /\bemulated\b/.test(help) && !/\bimagefile\b/.test(help)
-              ? `-camera-${facing} emulated`
-              : "";
-          }),
-          Effect.orElseSucceed(() => ""),
-        ),
-    );
-    const overrides = cameraArgs.filter(Boolean).join(" ");
-    if (overrides) {
-      env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS = [overrides, env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS]
-        .filter(Boolean)
-        .join(" ");
-    }
-  }
-  if (platform === "linux" && env.XDG_RUNTIME_DIR === undefined && uid !== undefined) {
-    // SSH sessions may omit the directory where the emulator publishes its gRPC token.
-    const runtimeDir = `/run/user/${uid}`;
-    const fs = yield* FileSystem.FileSystem;
-    const stat = yield* fs.stat(runtimeDir).pipe(Effect.option);
-    if (
-      stat._tag === "Some" &&
-      stat.value.type === "Directory" &&
-      Option.contains(stat.value.uid, uid)
-    ) {
-      env.XDG_RUNTIME_DIR = runtimeDir;
-    }
-  }
-  return env;
-});
-
 /** Only a Mac can list Apple simulators; elsewhere the hub's attempt surfaces as an error. */
 const hubPlatformArguments = (hostPlatform: NodeJS.Platform) =>
   hostPlatform === "darwin" ? [] : ["--platform", "android"];
@@ -271,7 +198,17 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const workingDirectory = yield* HostProcess.WorkingDirectory;
   const hostPlatform = yield* HostProcess.Platform;
   const sdk = yield* androidSdk;
-  const hostEnvironment = deviceHostEnvironment(environment, sdk.root, hostPlatform, path);
+  const settings = yield* ServerSettings.ServerSettingsService;
+  const settingsChanges = yield* settings.subscribeChanges;
+  const developerDirOf = (value: { readonly localDeviceDeveloperDir: string }) =>
+    value.localDeviceDeveloperDir;
+  let developerDir = yield* settings.getSettings.pipe(
+    Effect.map(developerDirOf),
+    Effect.orElseSucceed(() => ""),
+  );
+  const environmentFor = (dir: string) =>
+    deviceHostEnvironment(environment, sdk.root, hostPlatform, path, dir);
+  let hostEnvironment = environmentFor(developerDir);
   const startLock = yield* Semaphore.make(1);
   const runningRef = yield* Ref.make<RunningHost | null>(null);
   const restartDelayRef = yield* Ref.make(0);
@@ -876,6 +813,18 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     }),
   );
 
+  yield* settingsChanges.pipe(
+    Stream.map(developerDirOf),
+    Stream.filter((dir) => dir !== developerDir),
+    Stream.runForEach((dir) =>
+      Effect.sync(() => {
+        developerDir = dir;
+        hostEnvironment = environmentFor(dir);
+      }).pipe(Effect.andThen(stopAgent)),
+    ),
+    Effect.forkScoped,
+  );
+
   yield* Effect.addFinalizer(() => stop);
 
   const host: DeviceHost.DeviceHost["Service"] = {
@@ -898,6 +847,4 @@ export const __testing = {
   AgentDeviceDaemonFile,
   androidSdk,
   platformReason,
-  deviceHostEnvironment,
-  hubEnvironment,
 };

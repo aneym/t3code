@@ -1,4 +1,5 @@
 import * as ForkEmbed from "./forkEmbedSettings.ts";
+import * as ForkDevice from "./forkDeviceSettings.ts";
 import * as ForkSidebarThread from "./forkSidebarThreadSettings.ts";
 import * as ForkRailsWords from "./forkRailsWordsSettings.ts";
 import { ForkThreadSettingsFields, ForkThreadSettingsPatchFields } from "./forkThreadSettings.ts";
@@ -8,7 +9,7 @@ import {
   StorageCleanupSettings,
   StorageCleanupSettingsPatch,
 } from "./storageCleanupSettings.ts";
-import { SidebarAgentsSettings } from "./sidebarAgents.ts";
+import { SidebarAgentsServerFields, SidebarAgentsServerPatchFields } from "./sidebarAgents.ts";
 import { EasDeviceHostConfigs, SimlockDeviceHostConfigs, SshDeviceHostConfigs } from "./device.ts";
 import {
   AuthOrchestrationOperateScope,
@@ -41,10 +42,7 @@ import {
   LinkedEnvironmentServerSettingsFields,
   LinkedEnvironmentServerSettingsPatchFields,
 } from "./linkedEnvironmentSettings.ts";
-import {
-  LoadBalancingClientSettingsFields,
-  LoadBalancingClientSettingsPatchFields,
-} from "./loadBalancingSettings.ts";
+import * as LoadBalancing from "./loadBalancingSettings.ts";
 import {
   CustomModelSetting,
   DEFAULT_TEXT_GENERATION_MODEL,
@@ -420,7 +418,7 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   chatWidth: ChatWidth.pipe(Schema.withDecodingDefault(Effect.succeed("comfortable" as const))),
   effortDisplay: EffortDisplay.pipe(Schema.withDecodingDefault(Effect.succeed("label" as const))),
-  ...LoadBalancingClientSettingsFields,
+  ...LoadBalancing.LoadBalancingClientSettingsFields,
   appearanceContrast: AppearanceContrast.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_APPEARANCE_CONTRAST)),
   ),
@@ -1408,6 +1406,7 @@ export const ServerSettings = Schema.Struct({
   simlockDeviceHosts: SimlockDeviceHostConfigs.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** Alpha: Simlock device hosts. Off, the server ignores `simlockDeviceHosts`. */
   simlockDeviceHostsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  ...ForkDevice.Server,
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
@@ -1432,9 +1431,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   hideTaggedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  sidebarAgents: Schema.NullOr(SidebarAgentsSettings).pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
-  ),
+  ...SidebarAgentsServerFields,
   /** Beta: guest links for this machine's threads. Off refuses new links and pauses existing ones. */
   guestSharingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   ...LinkedEnvironmentServerSettingsFields,
@@ -1833,6 +1830,7 @@ export const ServerSettingsPatch = Schema.Struct({
   easDeviceHosts: Schema.optionalKey(EasDeviceHostConfigs),
   simlockDeviceHosts: Schema.optionalKey(SimlockDeviceHostConfigs),
   simlockDeviceHostsEnabled: Schema.optionalKey(Schema.Boolean),
+  ...ForkDevice.ServerPatch,
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   compactIdleThreads: Schema.optionalKey(LegacyCompactIdleThreads),
   idleCompaction: Schema.optionalKey(IdleCompactionMode),
@@ -1843,7 +1841,7 @@ export const ServerSettingsPatch = Schema.Struct({
   snoozePresets: Schema.optionalKey(SnoozePresetSettings),
   hiddenThreadTags: Schema.optionalKey(Schema.Array(Schema.String)),
   hideTaggedThreads: Schema.optionalKey(Schema.Boolean),
-  sidebarAgents: Schema.optionalKey(Schema.NullOr(SidebarAgentsSettings)),
+  ...SidebarAgentsServerPatchFields,
   guestSharingEnabled: Schema.optionalKey(Schema.Boolean),
   ...LinkedEnvironmentServerSettingsPatchFields,
   promptSuggestionsEnabled: Schema.optionalKey(Schema.Boolean),
@@ -1962,7 +1960,7 @@ export const ClientSettingsPatch = Schema.Struct({
   diffColorScheme: Schema.optionalKey(DiffColorScheme),
   chatWidth: Schema.optionalKey(ChatWidth),
   effortDisplay: Schema.optionalKey(EffortDisplay),
-  ...LoadBalancingClientSettingsPatchFields,
+  ...LoadBalancing.LoadBalancingClientSettingsPatchFields,
   appearanceContrast: Schema.optionalKey(AppearanceContrast),
   panelAnimationDurationMs: Schema.optionalKey(PanelAnimationDurationMs),
   browserDefaultViewport: Schema.optionalKey(PreviewViewportSetting),
