@@ -9,6 +9,8 @@ import type {
 } from "@t3tools/contracts";
 import { latestRootProviderFailure, runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 
+import type { SurvivingLongRun } from "./LongRunSurvivors.ts";
+
 type Work = OrchestrationV2RestartCancelledBackgroundWork;
 type Attempt = Pick<OrchestrationV2RunAttempt, "id" | "runId">;
 
@@ -130,6 +132,23 @@ export function restartCancelledBackgroundWorkNote(work: ReadonlyArray<Work>): s
   return [
     "Note: the T3 server restarted, and this background work was cancelled before it finished. It will not report back on its own, so resume or restart what you still need and wait for its result:",
     ...work.slice(0, MAX_NOTE_ENTRIES).map((entry) => `- ${entry.kind}: ${entry.label}`),
+    ...(omitted > 0 ? [`- and ${omitted} more`] : []),
+  ].join("\n");
+}
+
+const MAX_SURVIVOR_ENTRIES = 5;
+
+export function survivingLongRunsNote(survivors: ReadonlyArray<SurvivingLongRun>): string {
+  if (survivors.length === 0) return "";
+  const omitted = survivors.length - MAX_SURVIVOR_ENTRIES;
+  return [
+    "These `long-run` commands from this thread survived the restart and are still running. Check `long-run status` before running any of them again:",
+    ...survivors
+      .slice(0, MAX_SURVIVOR_ENTRIES)
+      .map(
+        (run) =>
+          `- ${compactLabel(run.name) ?? "long-run"}, log ${compactLabel(run.log) ?? "unknown"}`,
+      ),
     ...(omitted > 0 ? [`- and ${omitted} more`] : []),
   ].join("\n");
 }

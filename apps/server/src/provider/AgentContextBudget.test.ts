@@ -121,13 +121,23 @@ const layerAdvertisedTools = McpHttpServer.layerTools.pipe(
 );
 
 // Claude Code loads these tools up front instead of behind ToolSearch, outside this budget.
-it.effect("only request_secret asks Claude Code to load it up front", () =>
+it.effect("only the hand-off tools and request_secret ask Claude Code to load them up front", () =>
   Effect.gen(function* () {
     const mcp = yield* McpServer.McpServer;
     const alwaysLoad = mcp.tools
       .filter(({ tool }) => tool._meta?.["anthropic/alwaysLoad"] !== undefined)
-      .map(({ tool }) => [tool.name, tool._meta]);
-    expect(alwaysLoad).toEqual([["request_secret", { "anthropic/alwaysLoad": true }]]);
+      .map(({ tool }) => [tool.name, tool._meta])
+      .toSorted(([a], [b]) => String(a).localeCompare(String(b)));
+    expect(alwaysLoad).toEqual(
+      [
+        "delegate_task",
+        "request_secret",
+        "t3_queue",
+        "t3_thread_read",
+        "t3_thread_send",
+        "task_cancel",
+      ].map((name) => [name, { "anthropic/alwaysLoad": true }]),
+    );
   }).pipe(Effect.provide(layerAdvertisedTools)),
 );
 

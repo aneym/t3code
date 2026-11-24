@@ -54,6 +54,8 @@ import * as ProviderSwitchService from "./ProviderSwitchService.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as ThreadNoteContext from "./ThreadNoteContext.ts";
+import * as LongRunSurvivors from "./LongRunSurvivors.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
@@ -182,6 +184,9 @@ const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
   ),
 );
 
+const layerLongRunSurvivorsProvided = LongRunSurvivors.layer.pipe(
+  Layer.provide(ProcessRunner.layer),
+);
 const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -195,6 +200,7 @@ const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pip
       layerRuntimePolicyProvided,
       TurnItemPositionStore.layer,
       ThreadNoteContext.layer,
+      layerLongRunSurvivorsProvided,
     ),
   ),
 );
@@ -371,6 +377,7 @@ const layerEffectExecutorProvided = layerHoldingTurnStarts.pipe(
       layerRuntimeRequestServiceProvided,
       layerThreadTitleRegenerationProvided,
       layerThreadManagementProvided,
+      layerLongRunSurvivorsProvided,
     ),
   ),
 );
