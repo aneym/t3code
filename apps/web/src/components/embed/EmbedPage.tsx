@@ -15,6 +15,8 @@ import { useEmbedDocumentTitle } from "../../embed/useEmbedDocumentTitle";
 import {
   useEmbedKeptView,
   useEmbedKeptViewUpkeep,
+  useEmbedSavedEnvironmentGuard,
+  useEmbedSavedEnvironmentIds,
   useEmbedSavedHidden,
 } from "../../embed/useEmbedKeptView";
 import { useEmbedReadyReport } from "../../embed/useEmbedReadyReport";
@@ -52,6 +54,17 @@ function EmbedPrefetch({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
   useEffect(releaseEmbedThreadPrefetch, []);
   useEmbedNavigationPrefetch();
   return null;
+}
+
+function EmbedSavedEnvironmentGuard({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  useEmbedSavedEnvironmentGuard(environmentId);
+  return null;
+}
+
+function EmbedSavedEnvironmentGuards() {
+  return useEmbedSavedEnvironmentIds().map((environmentId) => (
+    <EmbedSavedEnvironmentGuard key={environmentId} environmentId={environmentId} />
+  ));
 }
 
 function EmbedConnectionReport({ environmentId }: { readonly environmentId: EnvironmentId }) {
@@ -127,9 +140,17 @@ export function EmbedPage({
   const threadRef = target?.kind === "server" ? target.threadRef : null;
   const signedIn = useEmbedKeptViewUpkeep(authenticated, threadRef);
   const hidden = useEmbedSavedHidden(threadRef?.environmentId ?? null);
-  if (!signedIn) return <EmbedNotice text="Sign in to continue." />;
+  if (!signedIn) {
+    return (
+      <>
+        <EmbedSavedEnvironmentGuards />
+        <EmbedNotice text="Sign in to continue." />
+      </>
+    );
+  }
   return (
     <>
+      <EmbedSavedEnvironmentGuards />
       {threadRef !== null && !hidden ? <EmbedPrefetch threadRef={threadRef} /> : null}
       {target?.kind === "server" ? (
         <EmbedConnectionNotice environmentId={target.threadRef.environmentId} />

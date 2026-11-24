@@ -88,6 +88,7 @@ export const ConnectionFailureCause = Schema.Literals([
   "tunnel_pending",
   "tunnel_not_enabled",
   "chat_session_forbidden",
+  "environment_removed",
 ]);
 export type ConnectionFailureCause = typeof ConnectionFailureCause.Type;
 

@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId, ScopedThreadRef, ServerConfig } from "@t3tools/contracts";
+import { EnvironmentId, type ScopedThreadRef, type ServerConfig } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { AVAILABLE_CONNECTION_STATE } from "@t3tools/client-runtime/connection";
@@ -101,23 +101,31 @@ const NO_KEPT_ENVIRONMENTS_ATOM = Atom.make(() => ({ saved: false, keep: null })
   Atom.withLabel("web-embed-kept-environments:none"),
 );
 
+const ACCESS_RETRY_MS = 2000;
+
 const keptViewAccessAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get): KeptViewAccess | null => {
     let live = true;
-    const read = () =>
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const read = (): void => {
+      clearTimeout(retry);
       void loadKeptViewAccess(environmentId).then(
         (access) => {
           if (live) get.setSelf(access);
         },
         () => {
-          if (live) get.setSelf({ generation: 0, refused: false });
+          if (!live) return;
+          get.setSelf(null);
+          retry = setTimeout(read, ACCESS_RETRY_MS);
         },
       );
+    };
     const stop = onKeptViewAccessChange((changed) => {
       if (changed === environmentId) read();
     });
     get.addFinalizer(() => {
       live = false;
+      clearTimeout(retry);
       stop();
     });
     read();
@@ -147,10 +155,30 @@ export function useEmbedSavedHidden(environmentId: EnvironmentId | null): boolea
   return useSavedAccess(environmentId) !== "open";
 }
 
-function forgetEnvironmentThreads(environmentId: EnvironmentId): void {
-  for (const atom of environmentThreads.environmentAtoms(environmentId)) {
-    appAtomRegistry.refresh(atom);
-  }
+const savedEnvironmentIdsAtom = Atom.make((get) =>
+  [...get(environmentCatalog.catalogValueAtom).entries.values()]
+    .filter((entry) => entry.target._tag !== "PrimaryConnectionTarget")
+    .map((entry) => entry.target.environmentId)
+    .toSorted()
+    .join("\n"),
+).pipe(Atom.withLabel("web-embed-saved-environment-ids"));
+
+export function useEmbedSavedEnvironmentIds(): ReadonlyArray<EnvironmentId> {
+  const joined = useAtomValue(savedEnvironmentIdsAtom);
+  return joined === "" ? [] : joined.split("\n").map((id) => EnvironmentId.make(id));
+}
+
+export function useEmbedSavedEnvironmentGuard(environmentId: EnvironmentId): void {
+  const refused = embedConnectionRefused(useAtomValue(connectionAtom(environmentId)));
+  const access = useAtomValue(savedAccessAtom(environmentId));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records this saved environment's refused pairing in IndexedDB so every frame stops showing and saving its views
+  useEffect(() => {
+    if (refused) void refuseKeptViews(environmentId).catch(() => undefined);
+  }, [refused, environmentId]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- stops every thread subscription and drops every in-memory snapshot of a refused environment until a pairing opens it again
+  useEffect(() => {
+    appAtomRegistry.set(environmentThreads.suspendedAtom(environmentId), access === "refused");
+  }, [access, environmentId]);
 }
 
 export function useEmbedKeptViewUpkeep(
@@ -167,16 +195,11 @@ export function useEmbedKeptViewUpkeep(
     environmentId === null ? NO_KEPT_ENVIRONMENTS_ATOM : keptEnvironmentsAtom(environmentId),
   );
   const saved = kept.saved;
-  const savedRefused = useSavedAccess(saved ? environmentId : null) === "refused";
   const [refusedSession, setRefusedSession] = useState(false);
   const connected = connection.phase === "connected";
   const signedOut = refusedSession && !connected && !saved;
   const refused = embedConnectionRefused(connection);
   const wasConnected = useRef(false);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops every thread snapshot this frame holds for a saved environment once any frame's pairing is refused
-  useEffect(() => {
-    if (savedRefused && environmentId !== null) forgetEnvironmentThreads(environmentId);
-  }, [savedRefused, environmentId]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the thread's own server whether this page is still signed in when its socket drops or is refused, and wipes its kept views in IndexedDB when it is not
   useEffect(() => {
     if (!authenticated || environmentId === null) return;
@@ -185,12 +208,7 @@ export function useEmbedKeptViewUpkeep(
       reopenKeptViews();
       return;
     }
-    if (saved) {
-      if (!refused) return;
-      void refuseKeptViews(environmentId).catch(() => undefined);
-      forgetEnvironmentThreads(environmentId);
-      return;
-    }
+    if (saved) return;
     if (!wasConnected.current && !refused) return;
     let current = true;
     void fetchSessionState()

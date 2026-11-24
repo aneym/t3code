@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Result from "effect/Result";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -59,6 +60,7 @@ export class ConnectionDriver extends Context.Service<
     readonly connect: (
       entry: ConnectionCatalogEntry,
       reportProgress: (progress: ConnectionDriverProgress) => Effect.Effect<void>,
+      reportRefusal?: (failure: ConnectionAttemptError) => Effect.Effect<void>,
     ) => Effect.Effect<EnvironmentConnectionLease, ConnectionAttemptError, Scope.Scope>;
     readonly preflight: (
       entry: ConnectionCatalogEntry,
@@ -86,6 +88,7 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   connectRoute: (
     route: ConnectionRoute,
   ) => Effect.Effect<EnvironmentConnectionLease, ConnectionAttemptError, R | Scope.Scope>,
+  reportRefusal: (failure: ConnectionAttemptError) => Effect.Effect<void> = () => Effect.void,
 ) {
   const routes = usableRoutes(entry);
   const checks =
@@ -108,8 +111,12 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     if (result._tag === "Failure") {
       const failure = withRouteKind(result.failure, route);
       if (failure._tag === "ConnectionTransientError") transient ??= failure;
-      else if (failure.failureCause === "chat_session_forbidden") refused ??= failure;
-      else blocked ??= failure;
+      else if (failure.failureCause !== "chat_session_forbidden") blocked ??= failure;
+      else if (refused === undefined) {
+        refused = failure;
+        yield* reportRefusal(failure);
+      }
+      return Result.fail(failure);
     }
     return result;
   });
@@ -210,6 +217,7 @@ export const make = Effect.gen(function* () {
   const connect = Effect.fn("ConnectionDriver.connect")(function* (
     entry: ConnectionCatalogEntry,
     reportProgress: (progress: ConnectionDriverProgress) => Effect.Effect<void>,
+    reportRefusal?: (failure: ConnectionAttemptError) => Effect.Effect<void>,
   ) {
     const target = entry.target;
     yield* Effect.annotateCurrentSpan({
@@ -244,6 +252,7 @@ export const make = Effect.gen(function* () {
         }
         return { prepared, session } satisfies EnvironmentConnectionLease;
       }),
+      reportRefusal,
     );
   });
 

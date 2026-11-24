@@ -30,8 +30,9 @@ export function embedFailureCodes(failure: unknown): EmbedFailureCodes {
   const hop = field(failure, "hop");
   const failureCause = field(failure, "failureCause");
   const httpStatus = field(failure, "httpStatus");
-  const via = field(failure, "via");
-  const routeKind = via === "relay" ? "relay" : field(failure, "routeKind");
+  const attempted = field(failure, "routeKind");
+  const routeKind =
+    attempted === undefined && field(failure, "via") === "relay" ? "relay" : attempted;
   return {
     reason: isReason(reason) ? reason : null,
     hop: isHop(hop) ? hop : null,

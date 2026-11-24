@@ -584,7 +584,11 @@ export const make = Effect.gen(function* () {
         const since = options?.unlessRemovedSince;
         const removed = (yield* Ref.get(removedAt)).get(environmentId);
         if (since !== undefined && removed !== undefined && removed >= since) {
-          return false;
+          return yield* new ConnectionBlockedError({
+            reason: "configuration",
+            failureCause: "environment_removed",
+            detail: "This environment was removed while it was being paired.",
+          });
         }
         if (options?.knownAddressOnly === true) {
           yield* assertKnownAddress(route);

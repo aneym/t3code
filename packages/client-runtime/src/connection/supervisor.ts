@@ -452,12 +452,16 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     generation: number,
     lastFailure: ConnectionAttemptError | null,
     synchronizedRoutes: Ref.Ref<number>,
+    refusal: Ref.Ref<Option.Option<ConnectionAttemptError>>,
   ) {
-    return yield* driver.connect(yield* attemptEntry, (progress) =>
-      (progress.stage === "synchronizing"
-        ? Ref.update(synchronizedRoutes, (count) => count + 1)
-        : Effect.void
-      ).pipe(Effect.andThen(reportProgress(attempt, generation, lastFailure, progress))),
+    return yield* driver.connect(
+      yield* attemptEntry,
+      (progress) =>
+        (progress.stage === "synchronizing"
+          ? Ref.update(synchronizedRoutes, (count) => count + 1)
+          : Effect.void
+        ).pipe(Effect.andThen(reportProgress(attempt, generation, lastFailure, progress))),
+      (failure) => Ref.set(refusal, Option.some(failure)),
     );
   });
 
@@ -539,16 +543,23 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     lastFailure: ConnectionAttemptError | null,
     pendingRetry: Option.Option<PendingRetryTrace>,
     synchronizedRoutes: Ref.Ref<number>,
+    refusal: Ref.Ref<Option.Option<ConnectionAttemptError>>,
   ) {
     if (usesRelay) {
       return yield* traceRelayEstablishment(
-        establishConnection(attempt, generation, lastFailure, synchronizedRoutes),
+        establishConnection(attempt, generation, lastFailure, synchronizedRoutes, refusal),
         attempt,
         generation,
         pendingRetry,
       );
     }
-    return yield* establishConnection(attempt, generation, lastFailure, synchronizedRoutes).pipe(
+    return yield* establishConnection(
+      attempt,
+      generation,
+      lastFailure,
+      synchronizedRoutes,
+      refusal,
+    ).pipe(
       Effect.map((lease) => ({
         attemptSpan: Option.none<Tracer.Span>(),
         lease,
@@ -882,6 +893,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     const switchingTo = yield* Ref.get(preferredRouteId);
     yield* SubscriptionRef.set(prepared, Option.none());
     const synchronizedRoutes = yield* Ref.make(0);
+    const refusal = yield* Ref.make(Option.none<ConnectionAttemptError>());
     const establishment = yield* Effect.raceAllFirst([
       exitUnlessInterrupted(
         establishTracedConnection(
@@ -890,6 +902,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           lastFailure,
           pendingRetry,
           synchronizedRoutes,
+          refusal,
         ),
       ).pipe(
         Effect.map((exit): EstablishmentEvent => ({
@@ -943,15 +956,20 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       } satisfies AttemptOutcome;
     }
     if (establishment._tag === "TimedOut") {
+      const refused = yield* Ref.get(refusal);
       return {
         _tag: "Failure",
         established: false,
         stable: false,
         failure: {
-          error: new ConnectionTransientError({
-            reason: "timeout",
-            detail: setupTimeoutDetail,
-          }),
+          error: Option.getOrElse(
+            refused,
+            () =>
+              new ConnectionTransientError({
+                reason: "timeout",
+                detail: setupTimeoutDetail,
+              }),
+          ),
           attemptSpan: Option.none(),
         },
       } satisfies AttemptOutcome;
