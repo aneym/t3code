@@ -59,11 +59,6 @@ export const childStartLimits = async (
   return limits;
 };
 
-const aged = (fastMs: number | undefined, child: ChildOrigin, now: number) =>
-  fastMs !== undefined &&
-  child.requested_at !== undefined &&
-  (child.requested_at === null || now - Date.parse(child.requested_at) > fastMs);
-
 export const limitedGroups = (
   limits: Limits,
   candidates: ReadonlyArray<string | null>,
@@ -71,7 +66,11 @@ export const limitedGroups = (
   now: number,
 ) => {
   const fast = limits.get(MAIN_CHILDREN);
-  const old = aged(fast?.fastMs, child, now);
+  const since = child.requested_at;
+  const old =
+    fast?.fastMs !== undefined &&
+    typeof since === "string" &&
+    now - Date.parse(since) > fast.fastMs;
   const from = (parents: ReadonlySet<string>) =>
     !old && child.parent != null && parents.has(child.parent);
   const groups = candidates.filter((group): group is string => {
@@ -83,7 +82,9 @@ export const limitedGroups = (
       !from(limit.exceptParents)
     );
   });
-  return fast !== undefined && from(fast.parents) ? [...groups, MAIN_CHILDREN] : groups;
+  return fast !== undefined && since !== null && from(fast.parents)
+    ? [...groups, MAIN_CHILDREN]
+    : groups;
 };
 
 export const allows = (
