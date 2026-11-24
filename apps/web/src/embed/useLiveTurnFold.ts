@@ -19,11 +19,12 @@ const asksPerson = (row: MessagesTimelineRow) =>
     (entry) => entry.projectedItem?.item.type === "approval_request",
   );
 
-function liveAnswerIndex(turn: ReadonlyArray<MessagesTimelineRow>): number {
+function liveAnswerIndex(turn: ReadonlyArray<MessagesTimelineRow>, keepLast: boolean): number {
   for (let index = turn.length - 1; index >= 0; index -= 1) {
     const row = turn[index]!;
-    if (STEPS.has(row.kind)) return -1;
-    if (row.kind === "message" && row.message.role === "assistant") return index;
+    if (STEPS.has(row.kind) && !keepLast) return -1;
+    if (row.kind !== "message" || row.message.role !== "assistant") continue;
+    if (!keepLast || row.message.text.trim() !== "") return index;
   }
   return -1;
 }
@@ -62,7 +63,7 @@ export function useLiveTurnFold(
   const working = rows[header];
   if (working?.kind === "working" && working.createdAt && working.createdAt === peeked) return rows;
   const turn = rows.slice(header + 1);
-  const answer = liveAnswerIndex(turn);
+  const answer = liveAnswerIndex(turn, keepOpening === true);
   const opening = keepOpening ? openingReplyRows(turn) : new Set<number>();
   const kept = turn.filter(
     (row, index) =>
