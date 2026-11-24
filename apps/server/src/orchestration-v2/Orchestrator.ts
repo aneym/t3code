@@ -162,6 +162,8 @@ import {
   resolveMessageDispatchIntent,
 } from "./CommandPolicy.ts";
 import { CommandReceiptStoreV2, type CommandReceiptV2 } from "./CommandReceiptStore.ts";
+import { contextBoundaryOrdinal, isHandoffSourceRun } from "./ContextBoundary.ts";
+import { sessionHasBackgroundWork } from "./SessionBackgroundWork.ts";
 import {
   ContextHandoffServiceV2,
   readForkHistoryItems,
@@ -1039,29 +1041,6 @@ function appendContextHandoffId(
   return handoffId === null ? handoffIds : Array.from(new Set([...handoffIds, handoffId]));
 }
 
-/** Ordinal of the latest started fresh-context run. Runs before it never reach a provider again. */
-function contextBoundaryOrdinal(
-  runs: ReadonlyArray<
-    Pick<
-      OrchestrationV2Run,
-      "ordinal" | "freshContext" | "status" | "startedAt" | "restartContinuationOfRunId"
-    >
-  >,
-): number {
-  let boundary = 0;
-  for (const run of runs) {
-    if (
-      run.freshContext === true &&
-      run.status !== "queued" &&
-      !cancelledBeforeStart(run) &&
-      run.ordinal > boundary
-    ) {
-      boundary = run.ordinal;
-    }
-  }
-  return boundary;
-}
-
 /** Threads with no started run (imported, or reserved by another queued run) never cross it. */
 function providerThreadPredatesBoundary(
   providerThread: Pick<OrchestrationV2ProviderThread, "firstRunOrdinal">,
@@ -1113,15 +1092,6 @@ function rootProviderThreadsForProvider(
         (right.lastRunOrdinal ?? 0) - (left.lastRunOrdinal ?? 0) ||
         DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
     );
-}
-
-function isHandoffSourceRun(run: OrchestrationV2Run): boolean {
-  return (
-    run.status === "completed" ||
-    run.status === "failed" ||
-    run.status === "interrupted" ||
-    (run.status === "cancelled" && run.startedAt !== null)
-  );
 }
 
 function lastDeliveredRunForProviderThread(
@@ -1297,31 +1267,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* Ref.update(events, (existing) => [...existing, withId]);
         return withId;
       });
-
-  const sessionHasBackgroundWork = Effect.fn("Orchestrator.sessionHasBackgroundWork")(function* (
-    detaching: OrchestrationV2ThreadProjection["providerSessions"][number],
-    providerThreads: OrchestrationV2ThreadProjection["providerThreads"],
-  ) {
-    const session = yield* providerSessions
-      .get(detaching.id)
-      .pipe(Effect.orElseSucceed(() => Option.none()));
-    if (Option.isNone(session)) return false;
-    const runtime = session.value;
-    const probes =
-      !detaching.capabilities.sessions.supportsMultipleProviderThreadsPerSession &&
-      runtime.hasPendingBackgroundWork !== undefined
-        ? [runtime.hasPendingBackgroundWork]
-        : providerThreads.flatMap((providerThread) =>
-            providerThread.providerSessionId === detaching.id &&
-            runtime.hasPendingBackgroundWorkForThread !== undefined
-              ? [runtime.hasPendingBackgroundWorkForThread(providerThread)]
-              : [],
-          );
-    for (const probe of probes) {
-      if (yield* probe.pipe(Effect.catchCause(() => Effect.succeed(true)))) return true;
-    }
-    return false;
-  });
 
   const readCommandProjection = (
     threadId: ThreadId,
@@ -2209,7 +2154,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
       const busySessionIds = new Set<ProviderSessionId>();
       for (const session of releasableSessions) {
-        if (yield* sessionHasBackgroundWork(session, projection.providerThreads)) {
+        if (
+          yield* sessionHasBackgroundWork(providerSessions, session, projection.providerThreads)
+        ) {
           busySessionIds.add(session.id);
         }
       }
@@ -4022,7 +3969,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
     if (command.type !== "thread.archive" && command.type !== "thread.settle") {
       for (const session of liveSessions) {
-        if (yield* sessionHasBackgroundWork(session, providerContext!.providerThreads)) {
+        if (
+          yield* sessionHasBackgroundWork(
+            providerSessions,
+            session,
+            providerContext!.providerThreads,
+          )
+        ) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
@@ -7376,7 +7329,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ]);
     const sessionsToDetach: Array<OrchestrationV2ProviderSession> = [];
     for (const detaching of releasableSessions) {
-      if (yield* sessionHasBackgroundWork(detaching, projection.providerThreads)) {
+      if (
+        yield* sessionHasBackgroundWork(providerSessions, detaching, projection.providerThreads)
+      ) {
         // A schedule has nobody to wait or press Stop; like a queued fresh start, leave it running.
         if (freshContext && command.scheduledTaskId !== undefined) continue;
         return yield* new OrchestratorDispatchError({

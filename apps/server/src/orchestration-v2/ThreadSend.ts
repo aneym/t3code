@@ -26,6 +26,14 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+import { railsMessageContext } from "@t3tools/shared/composerContextReferences";
+
+import {
+  childRollDue,
+  renderFreshCarry,
+  runsSinceFreshStart,
+  threadHasPendingWork,
+} from "./FreshCarry.ts";
 import type * as Orchestrator from "./Orchestrator.ts";
 import { threadSendHint } from "./ThreadSendHint.ts";
 import type {
@@ -50,7 +58,8 @@ export interface ThreadSendInput extends MessageSender {
   readonly modelSelection?: ModelSelection;
   readonly mode: ThreadSendMode;
   readonly linkedSender?: OrchestrationV2LinkedSender;
-  readonly freshContext?: boolean;
+  readonly freshContext?: boolean | "carry";
+  readonly childRoll?: { readonly preamble: string };
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
 }
@@ -64,6 +73,7 @@ export interface ThreadSendResult extends ThreadSendDelivery {
   readonly message: OrchestrationV2ConversationMessage;
   readonly run: OrchestrationV2Run;
   readonly turnItem: Extract<OrchestrationV2TurnItem, { readonly type: "user_message" }> | null;
+  readonly rolled?: true;
 }
 
 export class ThreadManagementThreadArchivedError extends Schema.TaggedError<ThreadManagementThreadArchivedError>()(
@@ -154,7 +164,29 @@ interface ThreadSendDeps<LoadError, DispatchError> {
   ) => OrchestrationV2Run | undefined;
   readonly sessionIsLive: (providerSessionId: ProviderSessionId) => Effect.Effect<boolean>;
   readonly hasReceipt: (commandId: CommandId) => Effect.Effect<boolean>;
+  readonly sessionHasBackgroundWork: (
+    session: OrchestrationV2ThreadProjection["providerSessions"][number],
+    providerThreads: OrchestrationV2ThreadProjection["providerThreads"],
+  ) => Effect.Effect<boolean>;
+  readonly childRollTokens: number;
+  readonly carryBudget: number;
 }
+
+const CARRY_HISTORY_ITEM_TYPES = [
+  "user_message",
+  "assistant_message",
+  "command_execution",
+  "error",
+  "run_interrupt_result",
+  "file_change",
+  "proposed_plan",
+] as const satisfies ReadonlyArray<OrchestrationV2TurnItem["type"]>;
+
+const rollsChild = (input: ThreadSendInput, childRollTokens: number) =>
+  input.childRoll !== undefined &&
+  input.freshContext === undefined &&
+  (input.mode === "queue" || input.mode === "auto") &&
+  childRollTokens > 0;
 
 export const makeSendToThread = <LoadError, DispatchError>(
   deps: ThreadSendDeps<LoadError, DispatchError>,
@@ -253,6 +285,97 @@ export const makeSendToThread = <LoadError, DispatchError>(
     return replayDispatchMode(input);
   });
 
+  const childRollReady = Effect.fn("ThreadSend.childRollReady")(function* (
+    input: ThreadSendInput,
+    loaded: ProjectionRecords<"runs" | "providerThreads" | "providerSessions" | "subagents">,
+    runs: ReadonlyArray<OrchestrationV2Run>,
+  ) {
+    if (threadHasPendingWork(loaded)) return false;
+    for (const session of loaded.providerSessions) {
+      if (session.status === "stopped" || session.status === "error") continue;
+      if (yield* deps.sessionHasBackgroundWork(session, loaded.providerThreads)) return false;
+    }
+    const active = loaded.providerThreads.find(
+      (thread) =>
+        thread.id === loaded.thread.activeProviderThreadId &&
+        (thread.firstRunOrdinal ?? 0) >= (runs[0]?.ordinal ?? 0),
+    );
+    const usedTokens =
+      active === undefined
+        ? undefined
+        : (yield* deps.loadRecords(input, ["providerTurns"], {
+            providerTurnThreadIds: [active.id],
+            latestProviderTurnUsageOnly: true,
+          })).providerTurns.find((turn) => turn.tokenUsage !== undefined)?.tokenUsage?.usedTokens;
+    const compacted =
+      runs.length > 0 &&
+      (yield* deps.loadRecords(input, ["turnItems"], {
+        turnItemRunIds: runs.map((run) => run.id),
+        turnItemTypes: ["compaction"],
+      })).turnItems.length > 0;
+    return childRollDue({
+      thread: loaded.thread,
+      runsSinceFreshStart: runs.length,
+      usedTokens,
+      compacted,
+      rollTokens: deps.childRollTokens,
+    });
+  });
+
+  const prepareFreshCarry = Effect.fn("ThreadSend.prepareFreshCarry")(function* (
+    input: ThreadSendInput,
+  ) {
+    const roll = rollsChild(input, deps.childRollTokens);
+    if (!roll && input.freshContext !== "carry") return undefined;
+    const loaded = yield* deps.loadRecords(input, [
+      "runs",
+      "providerThreads",
+      "providerSessions",
+      "subagents",
+    ]);
+    const runs = runsSinceFreshStart(loaded.runs);
+    if (roll && !(yield* childRollReady(input, loaded, runs))) return undefined;
+    const { turnItems } =
+      runs.length === 0
+        ? { turnItems: [] }
+        : yield* deps.loadRecords(input, ["turnItems"], {
+            turnItemRunIds: runs.map((run) => run.id),
+            turnItemTypes: CARRY_HISTORY_ITEM_TYPES,
+          });
+    const firstRun = loaded.runs.find((run) => run.ordinal === 1);
+    const brief =
+      roll && firstRun !== undefined
+        ? (yield* deps.loadRecords(input, ["messages"], { messageIds: [firstRun.userMessageId] }))
+            .messages[0]
+        : undefined;
+    const text = renderFreshCarry({
+      thread: loaded.thread,
+      runs,
+      items:
+        brief === undefined
+          ? turnItems
+          : turnItems.filter(
+              (item) => !(item.type === "user_message" && item.messageId === brief.id),
+            ),
+      ...(brief === undefined || input.childRoll === undefined
+        ? {}
+        : { brief: { preamble: input.childRoll.preamble, text: brief.text } }),
+      subagents: loaded.subagents,
+      pendingBackgroundTasks: loaded.providerThreads.flatMap(
+        (thread) => thread.pendingBackgroundTasks ?? [],
+      ),
+      budget: deps.carryBudget,
+    });
+    const carry = railsMessageContext(text, { id: "fresh-carry", label: "Fresh session carry" });
+    return carry === undefined
+      ? undefined
+      : {
+          ...input.context,
+          version: 1 as const,
+          records: [...(input.context?.records ?? []), ...carry.records],
+        };
+  });
+
   return Effect.fn("ThreadManagementService.sendToThread")(function* (requested: ThreadSendInput) {
     const input: ThreadSendInput =
       requested.freshContext && (requested.mode === "steer" || requested.mode === "restart")
@@ -264,6 +387,7 @@ export const makeSendToThread = <LoadError, DispatchError>(
         commandId: input.commandId,
       });
     let dispatchMode: SendDispatchMode;
+    let carriedContext: OrchestrationMessageContext | undefined;
     if (yield* deps.hasReceipt(input.commandId)) {
       const recorded = yield* deps.loadRecords(input, ["messages"], {
         messageIds: [input.messageId],
@@ -288,7 +412,11 @@ export const makeSendToThread = <LoadError, DispatchError>(
             ),
         ),
       );
+      carriedContext = yield* prepareFreshCarry(input);
     }
+    const context = carriedContext ?? input.context;
+    const freshContext =
+      carriedContext !== undefined || input.freshContext === true || input.freshContext === "carry";
 
     const dispatched = yield* deps.dispatch({
       type: "message.dispatch",
@@ -299,10 +427,10 @@ export const makeSendToThread = <LoadError, DispatchError>(
       ...messageSender(input),
       ...(input.linkedSender === undefined ? {} : { linkedSender: input.linkedSender }),
       text: input.text,
-      ...(input.context === undefined ? {} : { context: input.context }),
+      ...(context === undefined ? {} : { context }),
       attachments: input.attachments,
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
-      ...(input.freshContext ? { freshContext: true } : {}),
+      ...(freshContext ? { freshContext: true } : {}),
       dispatchMode,
       ...(input.mode === "auto" ? { deliveryIntent: "auto" } : {}),
       createdBy: input.createdBy,
@@ -370,6 +498,11 @@ export const makeSendToThread = <LoadError, DispatchError>(
       run,
       turnItem,
       delivery,
+      ...(input.childRoll !== undefined &&
+      input.freshContext === undefined &&
+      run.freshContext === true
+        ? { rolled: true as const }
+        : {}),
       ...(delivery === "held"
         ? {
             holdReason: run.queueHoldReason ?? null,

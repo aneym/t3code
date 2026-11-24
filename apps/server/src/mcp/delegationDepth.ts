@@ -9,7 +9,7 @@ import type * as ThreadManagementService from "../orchestration-v2/ThreadManagem
 import { MAX_REPORTED_DEPTH } from "../telemetry/ProviderDimensions.ts";
 
 export const delegationDepth = Effect.fn("delegationDepth")(function* (
-  threads: ThreadManagementService.ThreadManagementService["Service"],
+  threads: Pick<ThreadManagementService.ThreadManagementService["Service"], "getThreadShell">,
   thread: Pick<OrchestrationV2ThreadShell, "lineage" | "delegatedFrom">,
 ) {
   let depth = 0;

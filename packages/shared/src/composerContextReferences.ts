@@ -398,6 +398,10 @@ const RAILS_CONTEXT_KIND = "rails-context";
 
 export function railsMessageContext(
   text: string | undefined,
+  record: { readonly id: string; readonly label: string } = {
+    id: RAILS_CONTEXT_KIND,
+    label: "Rails context",
+  },
 ): OrchestrationMessageContext | undefined {
   const payload = text?.trim();
   if (!payload) return undefined;
@@ -407,8 +411,8 @@ export function railsMessageContext(
       {
         version: 1,
         kind: RAILS_CONTEXT_KIND,
-        contextId: RAILS_CONTEXT_KIND as ComposerContextId,
-        label: "Rails context",
+        contextId: record.id as ComposerContextId,
+        label: record.label,
         payload,
       },
     ],

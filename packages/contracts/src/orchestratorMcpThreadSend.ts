@@ -23,9 +23,9 @@ export const OrchestratorMcpThreadSendInput = Schema.Struct({
   context: Schema.optional(OrchestratorMcpMessageContext),
   mode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart", "note"])),
   freshContext: Schema.optional(
-    Schema.Boolean.annotate({
+    Schema.Union([Schema.Boolean, Schema.Literal("carry")]).annotate({
       description:
-        "Start a new provider session without the thread's earlier context, like /clear. Never steers.",
+        'Start a new provider session in the same thread. Never steers. `true`: no earlier context, like /clear. `"carry"`: the new session opens with a capped summary of the thread, its open child tasks and pending background work. `false`: keep the current session; a queued or auto send to an idle delegated child otherwise rolls it to a carried fresh session once its context grows large.',
     }),
   ),
   clientRequestId: Schema.optional(
@@ -55,6 +55,12 @@ export const OrchestratorMcpThreadSendResult = Schema.Struct({
   taskId: Schema.optional(NodeId),
   status: Schema.optional(OrchestrationV2RunStatus),
   ...ThreadSendDelivery.fields,
+  rolled: Schema.optional(
+    Schema.Literal(true).annotate({
+      description:
+        "This delegated child's context was large, so it started a fresh session carrying its brief and a summary. Same thread, worktree and task.",
+    }),
+  ),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
   receipt: Schema.optional(OrchestratorMcpThreadSendReceipt),
 });

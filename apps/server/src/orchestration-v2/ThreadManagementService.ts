@@ -57,6 +57,10 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import {
+  DEFAULT_HANDOFF_TOKEN_CAP,
+  handoffTokenCapConfig,
+} from "@t3tools/provider-core/server/handoffBudget";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import { existingThreadIdsForCommand } from "./commandThreadIds.ts";
@@ -70,6 +74,8 @@ import { OrchestratorProjectionError, type OrchestratorV2Error } from "./Orchest
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { projectedRowEncodedBytes } from "./threadHistoryPaging.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import { childRollTokensConfig, DEFAULT_CHILD_ROLL_TOKENS } from "./FreshCarry.ts";
+import { sessionHasBackgroundWork } from "./SessionBackgroundWork.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import {
   ThreadManagementDurableRunProjectionError,
@@ -481,6 +487,12 @@ const make = Effect.gen(function* () {
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+  const childRollTokens = yield* childRollTokensConfig.pipe(
+    Effect.orElseSucceed(() => DEFAULT_CHILD_ROLL_TOKENS),
+  );
+  const carryBudget = yield* handoffTokenCapConfig.pipe(
+    Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
+  );
 
   const assertProviderInstanceEnabled: ThreadManagementServiceShape["assertProviderInstanceEnabled"] =
     (input) =>
@@ -715,6 +727,10 @@ const make = Effect.gen(function* () {
     latestActiveRun,
     sessionIsLive: sessions.isLive,
     hasReceipt,
+    sessionHasBackgroundWork: (session, providerThreads) =>
+      sessionHasBackgroundWork(sessions, session, providerThreads),
+    childRollTokens,
+    carryBudget,
   });
   const noteToThread: ThreadManagementServiceShape["noteToThread"] = makeNoteToThread({
     loadRecords: getProjectThreadRecords,
