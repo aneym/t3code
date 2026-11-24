@@ -18,7 +18,15 @@ import type * as Projects from "../project/ProjectService.ts";
 import { projectsByRepository } from "../project/ProjectsByRepository.ts";
 import type * as PlacementSnapshots from "./PlacementSnapshots.ts";
 
-const FULL_REASONS = ["All ", "Load per core", "Available memory", "T3 server busy", "Free disk"];
+const FULL_REASONS = [
+  "All ",
+  "Load per core",
+  "CPU pressure",
+  "Available memory",
+  "Memory pressure",
+  "T3 server busy",
+  "Free disk",
+];
 
 export const localSkip = (
   provider: ServerProvider | undefined,
