@@ -38,7 +38,6 @@ import {
   groupFullText,
   type GroupLimit,
   healthLineFor,
-  isLaneGroup,
   limitedGroups,
   limitOf,
 } from "./DelegatedChildLimits.ts";
@@ -290,7 +289,7 @@ const make = Effect.gen(function* () {
       const ahead = held
         .slice(0, index)
         .filter((other) =>
-          (counts.groups.get(other.run_id) ?? []).some((group) => rowGroups.includes(group)),
+          (counts.waits.get(other.run_id) ?? []).some((group) => rowGroups.includes(group)),
         ).length;
       const blocked = rowGroups.find(
         (group) =>
@@ -441,10 +440,9 @@ const make = Effect.gen(function* () {
           const rowGroups = groups.get(row.run_id) ?? [];
           if (rowGroups.some((group) => blocked.has(group))) continue;
           if ((yield* breachOf(config, now, rowGroups)) !== undefined) continue;
-          const open = rowGroups.every((group) => allows(limits, group, running, started, now));
-          if (!open) {
-            const shut = rowGroups.filter((group) => !allows(limits, group, running, started, now));
-            for (const group of shut.every(isLaneGroup) ? shut : rowGroups) blocked.add(group);
+          const shut = rowGroups.filter((group) => !allows(limits, group, running, started, now));
+          if (shut.length > 0) {
+            for (const group of shut) blocked.add(group);
             continue;
           }
           released.add(row.run_id);
