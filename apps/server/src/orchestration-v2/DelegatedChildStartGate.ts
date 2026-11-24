@@ -31,10 +31,12 @@ import {
   makeClaims,
 } from "./DelegatedChildClaims.ts";
 import {
+  allows,
   type ChildOrigin,
   childStartLimits,
   EVERY_CHILD,
   type GroupLimit,
+  healthLineFor,
   limitedGroups,
 } from "./DelegatedChildLimits.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
@@ -133,11 +135,12 @@ const make = Effect.gen(function* () {
   const breachOf = Effect.fn("DelegatedChildStartGate.breachOf")(function* (
     config: Config,
     now: number,
+    groups: ReadonlyArray<string> = [],
   ) {
     if (!config.byRoom || config.line === undefined || resources === undefined) return undefined;
     const reading = yield* resources.read;
     return agentPlacementResourcesFresh(reading, now)
-      ? agentPlacementHealthBreach(reading, config.line)
+      ? agentPlacementHealthBreach(reading, healthLineFor(config.limits, groups, config.line))
       : undefined;
   });
 
@@ -159,7 +162,8 @@ const make = Effect.gen(function* () {
     limits: ReadonlyMap<string, GroupLimit>,
     child: ChildOrigin,
   ) {
-    return limitedGroups(limits, [yield* homeOf(rootProjectId), EVERY_CHILD], child);
+    const now = yield* Clock.currentTimeMillis;
+    return limitedGroups(limits, [yield* homeOf(rootProjectId), EVERY_CHILD], child, now);
   });
 
   const rootProjectOf = (threadId: ThreadId) =>
@@ -198,7 +202,8 @@ const make = Effect.gen(function* () {
   const readActiveChildren = sql<ActiveChild>`
     SELECT s.child_thread_id, root.project_id AS root_project_id,
       json_extract(t.payload_json, '$.providerInstanceId') AS provider,
-      json_extract(t.payload_json, '$.lineage.parentThreadId') AS parent
+      json_extract(t.payload_json, '$.lineage.parentThreadId') AS parent,
+      NULL AS requested_at
     FROM orchestration_v2_projection_nodes n
       INDEXED BY orchestration_v2_projection_nodes_live_idx
     JOIN orchestration_v2_projection_subagents s ON s.subagent_id = n.node_id
@@ -217,21 +222,6 @@ const make = Effect.gen(function* () {
   const isHeld = (run: HeldRun) =>
     run.status === "preparing" && run.childStartHeld === true && !released.has(run.id);
 
-  const allows = (
-    limits: ReadonlyMap<string, GroupLimit>,
-    group: string,
-    running: ReadonlyMap<string, number>,
-    started: ReadonlyMap<string, number>,
-    now: number,
-  ) => {
-    const limit = limits.get(group);
-    return (
-      limit === undefined ||
-      ((limit.perGroup === undefined || (running.get(group) ?? 0) < limit.perGroup) &&
-        (limit.staggerMs === undefined || now - (started.get(group) ?? 0) >= limit.staggerMs))
-    );
-  };
-
   const tally = Effect.fn("DelegatedChildStartGate.tally")(function* (
     rows: ReadonlyArray<ChildRow>,
     activeChildren: ReadonlyArray<ActiveChild>,
@@ -243,7 +233,11 @@ const make = Effect.gen(function* () {
     const heldThreads = new Set<string>();
     const activeThreads = new Map<string, ActiveChild>();
     for (const row of rows) {
-      const rowGroups = yield* groupsOf(row.root_project_id, limits, row);
+      const rowGroups = yield* groupsOf(
+        row.root_project_id,
+        limits,
+        heldRow(row) ? { ...row, requested_at: undefined } : row,
+      );
       groups.set(row.run_id, rowGroups);
       if (heldRow(row)) {
         heldThreads.add(row.thread_id);
@@ -251,9 +245,8 @@ const make = Effect.gen(function* () {
       } else activeThreads.set(row.thread_id, { ...row, child_thread_id: row.thread_id });
     }
     for (const child of activeChildren) {
-      if (!heldThreads.has(child.child_thread_id)) {
-        activeThreads.set(child.child_thread_id, child);
-      }
+      const id = child.child_thread_id;
+      if (!heldThreads.has(id) && !activeThreads.has(id)) activeThreads.set(id, child);
     }
     for (const [threadId, child] of activeThreads) {
       if (heldThreads.has(threadId)) continue;
@@ -302,14 +295,15 @@ const make = Effect.gen(function* () {
       if (row === undefined) return undefined;
       const now = yield* Clock.currentTimeMillis;
       const here = yield* label;
-      const blocked = (counts.groups.get(row.run_id) ?? []).find(
+      const rowGroups = counts.groups.get(row.run_id) ?? [];
+      const blocked = rowGroups.find(
         (group) =>
           group !== EVERY_CHILD &&
           (config.limits.get(group)?.perGroup ?? Infinity) <= (counts.running.get(group) ?? 0),
       );
       const reason =
-        (yield* breachOf(config, now)) ??
-        (current.cap !== null && current.active >= current.cap
+        (yield* breachOf(config, now, rowGroups)) ??
+        (rowGroups.includes(EVERY_CHILD) && current.cap !== null && current.active >= current.cap
           ? agentPlacementRoomFull(here, { ...current, free: 0 })
           : undefined) ??
         (blocked === undefined ? undefined : `All slots for ${blocked} on ${here} are in use.`) ??
@@ -368,7 +362,7 @@ const make = Effect.gen(function* () {
     const { running, queued } = yield* tally(rows, activeChildren, limits);
     const now = yield* Clock.currentTimeMillis;
     const { counted, started } = claims.count(running, lastStart, now, own);
-    const breach = yield* breachOf(config, now).pipe(Effect.orElseSucceed(() => undefined));
+    const breach = yield* breachOf(config, now, groups).pipe(Effect.orElseSucceed(() => undefined));
     const held =
       breach !== undefined ||
       groups.some(
@@ -446,11 +440,11 @@ const make = Effect.gen(function* () {
         const { groups } = counts;
         const now = yield* Clock.currentTimeMillis;
         const { counted: running, started } = claims.count(counts.running, lastStart, now);
-        if ((yield* breachOf(config, now)) !== undefined) return;
         const blocked = new Set<string>();
         for (const row of held) {
           const rowGroups = groups.get(row.run_id) ?? [];
           if (rowGroups.some((group) => blocked.has(group))) continue;
+          if ((yield* breachOf(config, now, rowGroups)) !== undefined) continue;
           const open = rowGroups.every((group) => allows(limits, group, running, started, now));
           if (!open) {
             for (const group of rowGroups) blocked.add(group);
