@@ -56,6 +56,10 @@ export const formatPlacementScore = (entry: AgentPlacementScore) =>
       : `skipped: ${entry.skipped}`,
     `weight ${entry.weight}`,
     entry.loadPerCore === null ? null : `load/core ${entry.loadPerCore.toFixed(2)}`,
+    entry.cpuPressure === undefined ? null : `cpu pressure ${entry.cpuPressure.toFixed(1)}%`,
+    entry.memoryPressure === undefined
+      ? null
+      : `memory pressure ${entry.memoryPressure.toFixed(1)}%`,
     entry.availableMemoryRatio === null
       ? null
       : `memory ${Math.round(entry.availableMemoryRatio * 100)}% free`,

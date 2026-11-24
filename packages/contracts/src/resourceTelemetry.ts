@@ -6,6 +6,10 @@ import { DesktopUpdateStateSchema } from "./ipc.ts";
 
 export const RESOURCE_MONITOR_PROTOCOL_VERSION = 3 as const;
 
+const PressurePercent = Schema.optionalKey(
+  Schema.NullOr(Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 }))),
+);
+
 export const HostResourcesSnapshot = Schema.Struct({
   sampledAt: NonNegativeInt,
   cpuUtilization: Schema.NullOr(Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 }))),
@@ -18,6 +22,8 @@ export const HostResourcesSnapshot = Schema.Struct({
   ),
   freeDiskBytes: Schema.optionalKey(NonNegativeInt),
   totalDiskBytes: Schema.optionalKey(NonNegativeInt),
+  cpuPressure: PressurePercent,
+  memoryPressure: PressurePercent,
 });
 export type HostResourcesSnapshot = typeof HostResourcesSnapshot.Type;
 

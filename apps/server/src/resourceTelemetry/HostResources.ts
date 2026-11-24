@@ -70,6 +70,11 @@ function darwinAvailableMemory(output: string): number | null {
   return Number.isSafeInteger(available) && Number(pageSize) > 0 ? available : null;
 }
 
+function pressureSome(text: string): number | null {
+  const value = /^some avg10=(\d+(?:\.\d+)?)/m.exec(text)?.[1];
+  return value === undefined ? null : Math.min(100, Number(value));
+}
+
 function cgroupNumber(text: string, pattern: RegExp): number | null {
   const value = pattern.exec(text)?.[1];
   return value === undefined ? null : Number(value);
@@ -188,6 +193,10 @@ const make = Effect.fn("makeHostResources")(function* () {
       Effect.orElseSucceed(() => undefined),
     );
     const loadAverage1m = platform === "win32" ? undefined : NodeOS.loadavg()[0];
+    const cpuPressure =
+      platform === "linux" ? pressureSome(yield* readFile("/proc/pressure/cpu")) : null;
+    const memoryPressure =
+      platform === "linux" ? pressureSome(yield* readFile("/proc/pressure/memory")) : null;
     const eventLoop = NodePerfHooks.performance.eventLoopUtilization();
     const serverEventLoopUtilization = NodePerfHooks.performance.eventLoopUtilization(
       eventLoop,
@@ -207,6 +216,8 @@ const make = Effect.fn("makeHostResources")(function* () {
           }),
       sampledAt: DateTime.toEpochMillis(yield* DateTime.now),
       cpuUtilization,
+      cpuPressure,
+      memoryPressure,
       cpuCount,
       availableMemoryBytes: Math.min(totalMemoryBytes, Math.max(0, availableMemoryBytes)),
       totalMemoryBytes,
