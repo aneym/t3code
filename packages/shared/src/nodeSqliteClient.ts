@@ -256,6 +256,7 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
         readonly worker: NodeWorkerThreads.Worker;
         readonly connection: Connection;
         readonly started: Promise<WorkerStartup>;
+        readonly whenIdle: (done: () => void) => void;
       }
     | undefined;
   let nextRequestId = 0;
@@ -282,6 +283,10 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
       number,
       { readonly endsTransaction: boolean; readonly resume: (reply: WorkerReply) => void }
     >();
+    const idle: Array<() => void> = [];
+    const settle = () => {
+      while (pending.size === 0 && idle.length > 0) idle.shift()!();
+    };
     const stop = (message: string) => {
       stoppedMessage = message;
       if (options.role === "writer") writerStopped = message;
@@ -295,6 +300,7 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
         );
       }
       pending.clear();
+      settle();
     };
     worker.on("message", (reply: WorkerReply | WorkerStartup) => {
       if ("type" in reply) {
@@ -308,6 +314,7 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
       if (pending.size === 0) worker.unref();
       options.onReply?.();
       request.resume(reply);
+      settle();
     });
     worker.on("error", (cause) => stop(`${label} failed: ${cause.message}`));
     worker.on("exit", (code) => stop(`${label} exited with code ${code}`));
@@ -382,7 +389,11 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
         return Stream.die(new UnsupportedNodeSqliteOperationError());
       },
     });
-    current = { worker, connection, started };
+    const whenIdle = (done: () => void) => {
+      idle.push(done);
+      settle();
+    };
+    current = { worker, connection, started, whenIdle };
     return current;
   };
 
@@ -407,7 +418,9 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
     void worker.terminate();
   };
 
-  return Effect.suspend((): Effect.Effect<Connection, SqlError> => {
+  const whenIdle = (done: () => void) => (current === undefined ? done() : current.whenIdle(done));
+
+  const acquire = Effect.suspend((): Effect.Effect<Connection, SqlError> => {
     if (current === undefined && writerStopped !== undefined) {
       return Effect.fail(failedWith({ message: writerStopped }, "execute"));
     }
@@ -448,12 +461,17 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
       },
     );
   });
+  return { acquire, whenIdle };
 });
 
 // A reader that cannot start turns off the whole pool, so routing never picks a dead slot.
 const makeReader = Effect.fnUntraced(function* (filename: string, pool: { unavailable: boolean }) {
-  const acquire = yield* makeWorkerConnection({ filename, role: "reader", readOnly: true });
-  return Effect.suspend((): Effect.Effect<Connection | undefined> =>
+  const { acquire, whenIdle } = yield* makeWorkerConnection({
+    filename,
+    role: "reader",
+    readOnly: true,
+  });
+  const connect = Effect.suspend((): Effect.Effect<Connection | undefined> =>
     pool.unavailable
       ? Effect.undefined
       : acquire.pipe(
@@ -468,6 +486,7 @@ const makeReader = Effect.fnUntraced(function* (filename: string, pool: { unavai
           }),
         ),
   );
+  return { connect, whenIdle };
 });
 
 // A checkpoint copies WAL pages into the database and syncs it. On the writer's thread every
@@ -723,12 +742,12 @@ const make = Effect.fn("makeWithDatabase")(function* (
   const writerWorker = options.writerWorker === true && isFileDatabase;
   let checkpointAfterWrite: (() => void) | undefined;
   const writerConnection: Effect.Effect<Connection, SqlError> = writerWorker
-    ? yield* makeWorkerConnection({
+    ? (yield* makeWorkerConnection({
         filename: options.filename,
         role: "writer",
         readOnly: options.readonly ?? false,
         onReply: () => checkpointAfterWrite?.(),
-      })
+      })).acquire
     : Effect.succeed(yield* makeConnection);
   // Opening now fails the layer for a file that is not a database, not its first query.
   const opened = yield* writerConnection;
@@ -791,12 +810,21 @@ const make = Effect.fn("makeWithDatabase")(function* (
       return Effect.flatMap(readers.take(lane, restoreWait), (held) => {
         const lockWaitMs = waitedMs(clock, start);
         const release = readers.release(held);
-        return held.slot.reader.pipe(
+        const releaseWhenIdle = Effect.sync(() =>
+          held.slot.reader.whenIdle(() => readers.releaseUnsafe(held)),
+        );
+        return held.slot.reader.connect.pipe(
           Effect.onError(() => release),
           Effect.flatMap((handle) =>
             handle === undefined
               ? Effect.andThen(release, writerLease(restoreWait, clock, start))
-              : Effect.succeed<Lease>({ connection: "reader", lane, handle, release, lockWaitMs }),
+              : Effect.succeed<Lease>({
+                  connection: "reader",
+                  lane,
+                  handle,
+                  release: releaseWhenIdle,
+                  lockWaitMs,
+                }),
           ),
         );
       });
