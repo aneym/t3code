@@ -8818,15 +8818,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const parentNode = parentProjection.nodes.find(
         (candidate) => candidate.id === command.parentNodeId,
       );
-      if (
-        parentNode === undefined ||
-        parentNode.runId !== parentRun.id ||
-        parentRun.rootNodeId === null
-      ) {
+      if (parentNode === undefined || parentRun.rootNodeId !== parentNode.id) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: `Parent node ${command.parentNodeId} is not part of active run ${parentRun.id}.`,
+          cause: `Parent node ${command.parentNodeId} is not the live turn of run ${parentRun.id}; a steer replaced it.`,
         });
       }
 
