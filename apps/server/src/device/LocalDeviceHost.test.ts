@@ -18,6 +18,8 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import * as NetService from "@t3tools/shared/Net";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { hubEnvironment } from "./localDeviceEnvironment.ts";
 import {
   AGENT_DEVICE_VERSION,
   DEVICE_HUB_VERSION,
@@ -64,7 +66,13 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     yield* fs.writeFileString(path.join(stateDir, "daemon.json"), JSON.stringify(previousDaemon));
   }
   const host = yield* LocalDeviceHost.make().pipe(
-    Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
+    Effect.provide(
+      Layer.mergeAll(
+        ServerConfig.layerTest(baseDir, baseDir),
+        NetService.layer,
+        ServerSettings.layerTest(),
+      ),
+    ),
     Effect.provideService(HostProcess.Environment, { HOME: baseDir, PATH: "" }),
     Effect.provideService(HostProcess.IsExecutable, false),
     Effect.provideService(HostProcess.Platform, "darwin"),
@@ -498,7 +506,7 @@ it.effect(
         ["win32", 1000, undefined, "Directory", 1000, undefined],
       ] as const) {
         const environment = { PATH: "/usr/bin", XDG_RUNTIME_DIR: runtimeDir };
-        const result = yield* LocalDeviceHost.__testing.hubEnvironment(environment).pipe(
+        const result = yield* hubEnvironment(environment).pipe(
           Effect.provideService(HostProcess.Platform, platform),
           Effect.provideService(HostProcess.UserId, uid),
           Effect.provideService(
@@ -517,13 +525,11 @@ it.effect(
         expect(result.NO_COLOR).toBe("1");
         expect(environment.XDG_RUNTIME_DIR).toBe(runtimeDir);
       }
-      const missing = yield* LocalDeviceHost.__testing
-        .hubEnvironment({})
-        .pipe(
-          Effect.provideService(HostProcess.Platform, "linux"),
-          Effect.provideService(HostProcess.UserId, 1000),
-          Effect.provideService(FileSystem.FileSystem, FileSystem.makeNoop({})),
-        );
+      const missing = yield* hubEnvironment({}).pipe(
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HostProcess.UserId, 1000),
+        Effect.provideService(FileSystem.FileSystem, FileSystem.makeNoop({})),
+      );
       expect(missing.XDG_RUNTIME_DIR).toBeUndefined();
     }).pipe(
       Effect.scoped,
@@ -574,22 +580,23 @@ it.effect.each([
   },
 ])("configures supported emulator cameras for $name", ({ front, back, code, extra, expected }) =>
   Effect.gen(function* () {
-    const result = yield* LocalDeviceHost.__testing
-      .hubEnvironment({ ANDROID_HOME: "/sdk", EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS: extra })
-      .pipe(
-        Effect.provideService(HostProcess.Platform, "darwin"),
-        Effect.provideService(HostProcess.UserId, 1000),
-        Effect.provideService(ProcessRunner.ProcessRunner, {
-          run: (input) => {
-            expect(input.command).toBe("/sdk/emulator/emulator");
-            expect(input.args[0]).toMatch(/^-help-camera-(front|back)$/);
-            return Effect.succeed(
-              processOutput(code, input.args[0] === "-help-camera-front" ? front : back),
-            );
-          },
-        }),
-        Effect.provide(NodeServices.layer),
-      );
+    const result = yield* hubEnvironment({
+      ANDROID_HOME: "/sdk",
+      EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS: extra,
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "darwin"),
+      Effect.provideService(HostProcess.UserId, 1000),
+      Effect.provideService(ProcessRunner.ProcessRunner, {
+        run: (input) => {
+          expect(input.command).toBe("/sdk/emulator/emulator");
+          expect(input.args[0]).toMatch(/^-help-camera-(front|back)$/);
+          return Effect.succeed(
+            processOutput(code, input.args[0] === "-help-camera-front" ? front : back),
+          );
+        },
+      }),
+      Effect.provide(NodeServices.layer),
+    );
     expect(result.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS).toBe(expected);
   }),
 );
@@ -619,7 +626,13 @@ it.effect("keeps local Android and iOS available without ffmpeg", () =>
         Effect.provideService(HostProcess.Platform, "darwin"),
       );
     const host = yield* LocalDeviceHost.make().pipe(
-      Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
+      Effect.provide(
+        Layer.mergeAll(
+          ServerConfig.layerTest(baseDir, baseDir),
+          NetService.layer,
+          ServerSettings.layerTest(),
+        ),
+      ),
       onTestHost,
       Effect.provideService(
         HttpClient.HttpClient,
@@ -651,7 +664,13 @@ it.effect(
       const fs = yield* FileSystem.FileSystem;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-consent-" });
       const host = yield* LocalDeviceHost.make().pipe(
-        Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
+        Effect.provide(
+          Layer.mergeAll(
+            ServerConfig.layerTest(baseDir, baseDir),
+            NetService.layer,
+            ServerSettings.layerTest(),
+          ),
+        ),
         Effect.provideService(HostProcess.Environment, { HOME: baseDir, PATH: "" }),
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(

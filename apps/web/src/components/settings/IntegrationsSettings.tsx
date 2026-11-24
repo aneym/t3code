@@ -3,6 +3,7 @@ import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { DeviceSourcesSettings } from "./DeviceSourcesSettings";
+import { LocalXcodeSetting } from "./LocalXcodeSetting";
 import {
   AuthSettingsWriteScope,
   BrowserImportFailureReason,
@@ -955,11 +956,7 @@ function DeviceIntegrationControls({
         description={
           <>
             Open simulators and emulators in the Device panel. Hub:{" "}
-            <DeviceToolVersions
-              action={versionActions("hub")}
-              kind="hub"
-              tools={state.hosts.find((host) => host.kind === "local")?.tools}
-            />
+            <DeviceToolVersions action={versionActions("hub")} kind="hub" tools={localTools} />
           </>
         }
         control={
@@ -994,11 +991,7 @@ function DeviceIntegrationControls({
         description={
           <>
             New agent sessions can open and drive these devices. agent-device:{" "}
-            <DeviceToolVersions
-              action={versionActions("agent")}
-              kind="agent"
-              tools={state.hosts.find((host) => host.kind === "local")?.tools}
-            />
+            <DeviceToolVersions action={versionActions("agent")} kind="agent" tools={localTools} />
           </>
         }
         control={
@@ -1023,6 +1016,7 @@ function DeviceIntegrationControls({
           </>
         }
       />
+      <LocalXcodeSetting />
       {environmentId ? (
         <DeviceHostUpdates
           state={{ ...state, hosts: state.hosts.filter((host) => host.kind === "local") }}
