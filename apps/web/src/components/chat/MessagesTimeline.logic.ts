@@ -1,6 +1,9 @@
 import * as DateTime from "effect/DateTime";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
-import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
+import {
+  isQuietAssistantMessage,
+  resolveUserMessagePresentation,
+} from "@t3tools/client-runtime/user-message";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
 import * as Equal from "effect/Equal";
 import { shallow } from "zustand/vanilla/shallow";
@@ -1185,8 +1188,6 @@ function deriveTurnFolds(input: {
 
     const isLatestInterruptedTurn =
       input.latestRun?.runId === runId && input.latestRun.status === "interrupted";
-    // A turn cut short by a steer leaves trailing work entries behind its
-    // terminal message — take whichever ended last.
     const lastEntryEnd = timelineEntryEnd(lastEntry);
     const elapsedMs =
       input.latestRun?.runId === runId && input.latestRun.startedAt && input.latestRun.completedAt
@@ -1205,9 +1206,6 @@ function deriveTurnFolds(input: {
         ? `Worked for ${duration}`
         : "Worked";
 
-    // The top row keeps the whole turn's time, steers included. Work after a
-    // steer folds under its own row below that steer, keyed apart from the run
-    // so each segment opens on its own.
     const segmentHiddenIds = (entries: ReadonlyArray<TimelineEntry>) =>
       new Set(entries.flatMap((entry) => (hiddenEntryIds.has(entry.id) ? [entry.id] : [])));
     const firstSegment = group.entries.slice(0, group.steerSegments[0]?.startIndex);
@@ -1722,9 +1720,6 @@ export function deriveMessagesTimelineRows(input: {
   const activeWorkEntryIds = new Set(
     activeWorkRow !== null || latestToolFailed ? activeToolEntries.map((entry) => entry.id) : [],
   );
-  // A bare `/compact` turn is the compaction itself: one compaction row stands in for its prompt
-  // and working indicator, from the moment the turn starts. Likewise an answered "compact before
-  // continuing?" question folds into the compaction it asked for.
   const compactionRuns = new Map<RunId, OrchestrationV2IdleCompaction | undefined>();
   const compactedRunIds = new Set<RunId>();
   const pendingResumeCompactionAgeByRunId = new Map<RunId, string>();
@@ -2190,6 +2185,13 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    if (
+      isQuietAssistantMessage(timelineEntry.message) &&
+      timelineEntry.projectedItem?.item.status !== "interrupted"
+    ) {
+      continue;
+    }
+
     const assistantResponseStillInProgress =
       timelineEntry.message.role === "assistant" &&
       runIdIsActiveResponse(timelineEntry.message.runId);
@@ -2526,8 +2528,6 @@ function replaceStreamingMessageRows(
     replacements.set(previousEntry.message, entry);
   }
   if (replacements.size === 0 && thoughts.size === 0 && plans.size === 0) return previous.rows;
-  // Rows settle superseded thinking after tool visibility filtering, which these entries
-  // have not seen; the fast path keeps item status, so the row's settled status still holds.
   const patchedThoughts = new Map<WorkLogEntry, WorkLogEntry>();
   const patchThought = (entry: WorkLogEntry) => {
     const thought = thoughts.get(entry.id);

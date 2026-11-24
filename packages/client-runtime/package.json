@@ -171,6 +171,10 @@
       "types": "./src/relay/index.ts",
       "default": "./src/relay/index.ts"
     },
+    "./state/background-work-labels": {
+      "types": "./src/state/backgroundWorkLabels.ts",
+      "default": "./src/state/backgroundWorkLabels.ts"
+    },
     "./state/agent-homes": {
       "types": "./src/state/agentHomes.ts",
       "default": "./src/state/agentHomes.ts"

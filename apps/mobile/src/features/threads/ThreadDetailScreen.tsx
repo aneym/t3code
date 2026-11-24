@@ -66,6 +66,7 @@ import {
   presentPendingBackgroundWork,
   presentProviderGoal,
 } from "@t3tools/client-runtime/state/thread-execution";
+import { backgroundWorkLabelList } from "@t3tools/client-runtime/state/background-work-labels";
 import { resolveSubagentPillSegment } from "@t3tools/client-runtime/state/thread-subagents";
 import {
   formatModelSelectionEffort,
@@ -378,8 +379,6 @@ const NO_RUN_STOP_ATOM = Atom.make<RunStopPresentation | null>(null).pipe(
 
 const RECONNECT_ERROR_DELAY_MS = 30000;
 
-// Anchors, the submitted message, follow state and pending scrolls belong to
-// one thread, so the body remounts when the thread changes.
 export function ThreadDetailScreen(props: ThreadDetailScreenProps) {
   const [statusRequests, setStatusRequests] = useState<
     Record<string, BackgroundWorkStopRequest | undefined>
@@ -831,9 +830,9 @@ function ThreadDetailBody(
       return {
         kind: "background",
         label: pendingBackgroundWork.title,
-        accessibilityLabel: `${pendingBackgroundWork.title}: ${pendingBackgroundWork.items
-          .map((item) => item.label)
-          .join(", ")}`,
+        accessibilityLabel: `${pendingBackgroundWork.title}: ${backgroundWorkLabelList(
+          pendingBackgroundWork.items,
+        )}`,
         waiting: pendingBackgroundWork.waiting,
         onPress: () => {
           Keyboard.dismiss();

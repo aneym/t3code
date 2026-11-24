@@ -11,6 +11,10 @@ import {
   presentProviderGoal,
   type RunStopPresentation,
 } from "@t3tools/client-runtime/state/thread-execution";
+import {
+  groupRepeatedLabels,
+  repeatCountSuffix,
+} from "@t3tools/client-runtime/state/background-work-labels";
 import { childThreadInputsTitle } from "@t3tools/client-runtime/state/threads";
 import { commandDisplayText } from "@t3tools/client-runtime/work-log/command-label";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
@@ -220,7 +224,7 @@ export function backgroundWorkNowItem(input: {
     title:
       only && typeof only.label !== "string" && only.task.label !== only.task.kind ? (
         <>
-          {presentation.waiting ? "Waiting" : "Running"} · {only.label}
+          {presentation.waiting ? "Working" : "Running"} · {only.label}
         </>
       ) : (
         presentation.title
@@ -232,10 +236,11 @@ export function backgroundWorkNowItem(input: {
         {newest.label}: {newest.activity}
       </>
     ) : (
-      rows.map((row, index) => (
+      groupRepeatedLabels(rows, (row) => row.task.label).map(({ first: row, count }, index) => (
         <Fragment key={row.task.taskId}>
           {index > 0 ? ", " : null}
           {row.label}
+          {repeatCountSuffix(count)}
         </Fragment>
       ))
     ),

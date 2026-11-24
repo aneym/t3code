@@ -37,6 +37,19 @@ const RAILS_DESK_CONTEXT = /^<rails-desk lane="[A-Za-z0-9_-]{1,64}">\n[\s\S]*?\n
 export const withoutRailsDeskContext = (text: string): string =>
   text.replace(RAILS_DESK_CONTEXT, "");
 
+const QUIET_ASSISTANT_TEXT = /^(?:nothing to add[.!]*)?$/i;
+
+export const isQuietAssistantMessage = (message: {
+  readonly role: string;
+  readonly text: string;
+  readonly streaming?: boolean | undefined;
+  readonly attachments?: ReadonlyArray<unknown> | undefined;
+}): boolean =>
+  message.role === "assistant" &&
+  message.streaming !== true &&
+  (message.attachments?.length ?? 0) === 0 &&
+  QUIET_ASSISTANT_TEXT.test(message.text.trim());
+
 export function resolveUserMessageFileCards(message: {
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;

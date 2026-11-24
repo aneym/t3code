@@ -79,6 +79,7 @@ import * as DateTime from "effect/DateTime";
 import {
   IDLE_COMPACTION_TITLES,
   IDLE_COMPACTING_LABELS,
+  isQuietAssistantMessage,
 } from "@t3tools/client-runtime/user-message";
 
 export type PendingApproval = ThreadPendingApproval;
@@ -1285,8 +1286,6 @@ function deriveThreadFeedRunFolds(
       : duration
         ? `Worked for ${duration}`
         : "Worked";
-    // The top row keeps the whole turn's time. Work after a steer folds under
-    // its own row below that steer, keyed apart so each segment opens alone.
     const segments = [
       {
         runId,
@@ -1683,9 +1682,6 @@ export function deriveThreadFeedPresentation(
   );
   const failedRunIds = failedFeedRunIds(sourceFeed, latestRun);
   const activeTailGroup = sourceFeed.at(-1);
-  // A bare `/compact` turn is the compaction itself: its compaction row stands in for the prompt
-  // and the live activity row. An answered "compact before continuing?" question folds into the
-  // compaction it asked for.
   const compactionCommandRunIds = new Set<RunId>();
   const compactionItemRunIds = new Set<RunId>();
   for (const entry of feed) {
@@ -1955,6 +1951,7 @@ function appendPresentedFeedEntry(
   isWorking: boolean,
   activeTail: boolean,
 ): void {
+  if (entry.type === "message" && isQuietAssistantMessage(entry.message)) return;
   if (entry.type !== "activity-group") {
     result.push(entry);
     return;

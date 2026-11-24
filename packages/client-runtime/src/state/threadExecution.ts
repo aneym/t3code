@@ -499,7 +499,7 @@ const BACKGROUND_WORK_KINDS: Record<
   BackgroundWorkKind,
   { readonly order: number; readonly singular: string; readonly plural: string }
 > = {
-  subagent: { order: 0, singular: "subagent", plural: "subagents" },
+  subagent: { order: 0, singular: "task", plural: "tasks" },
   command: { order: 1, singular: "command", plural: "commands" },
   monitor: { order: 2, singular: "monitor", plural: "monitors" },
   background_task: { order: 3, singular: "background task", plural: "background tasks" },
@@ -628,9 +628,9 @@ export function presentPendingBackgroundWork(
     const noun = BACKGROUND_WORK_KINDS[only.kind].singular;
     const named = only.label !== noun;
     const title = named
-      ? `${waiting ? "Waiting" : "Running"} · ${only.label}`
+      ? `${waiting ? "Working" : "Running"} · ${only.label}`
       : waiting
-        ? `Waiting on a ${noun}`
+        ? `Working on a ${noun}`
         : `Running a ${noun}`;
     return { title, items, waiting };
   }
@@ -640,7 +640,7 @@ export function presentPendingBackgroundWork(
     const { singular, plural } = BACKGROUND_WORK_KINDS[kind];
     return `${count} ${count === 1 ? singular : plural}`;
   });
-  return { title: `${waiting ? "Waiting on" : "Running"} ${joinWithAnd(groups)}`, items, waiting };
+  return { title: `${waiting ? "Working on" : "Running"} ${joinWithAnd(groups)}`, items, waiting };
 }
 
 export interface ProviderGoalPresentation {
