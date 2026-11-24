@@ -52,7 +52,6 @@ import {
   type OrchestratorMcpThreadWaitResult,
   type ProviderInteractionMode,
   type ProviderOptionDescriptor,
-  ProviderRequestKind,
   type RuntimeMode,
   type ScheduledTask,
   type ScheduledTaskUpsertInput,
@@ -90,7 +89,6 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
@@ -150,6 +148,9 @@ import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import { resolveDelegatedTaskWorkspace } from "./delegatedTaskWorkspace.ts";
 import { completionWakeFor, delegatedAdmission } from "./delegatedAdmission.ts";
+import { releaseDelegateKey } from "./delegateKeyLock.ts";
+import { remoteDelegateTaskId } from "./delegateRetry.ts";
+import { pendingTaskApproval } from "./pendingTaskApproval.ts";
 import { recentThreadRuns, runExecutedModel } from "./threadRunSummary.ts";
 import { loadThreadReadRecords } from "./threadReadRecords.ts";
 import { recordTaskCancelAndStop } from "./taskCancelStop.ts";
@@ -416,45 +417,6 @@ function endsTaskWait(result: OrchestratorMcpDelegateTaskResult): boolean {
     result.pendingApproval !== null ||
     isTerminalTaskStatus(result.status)
   );
-}
-
-const isApprovalRequestKind = Schema.is(ProviderRequestKind);
-
-function pendingTaskApproval(
-  child: Pick<OrchestrationV2ThreadProjection, "runs" | "nodes" | "runtimeRequests">,
-  taskId: NodeId,
-  originalRun: OrchestrationV2Run | undefined,
-) {
-  const taskRunIds = new Set(
-    child.runs
-      .filter(
-        (run) =>
-          !ThreadManagementService.isTerminalRunStatus(run.status) &&
-          (run.delegatedTaskId === taskId ||
-            // Legacy tasks own only their original run, not later turns in the child thread.
-            (run.delegatedTaskId === undefined && run.id === originalRun?.id)),
-      )
-      .map((run) => run.id),
-  );
-  let approval: OrchestratorMcpDelegateTaskResult["pendingApproval"] = null;
-  let oldestCreatedAt = Infinity;
-  for (const request of child.runtimeRequests) {
-    if (
-      request.status !== "pending" ||
-      request.responseCapability.type !== "live" ||
-      !isApprovalRequestKind(request.kind)
-    ) {
-      continue;
-    }
-    const runId = child.nodes.find((node) => node.id === request.nodeId)?.runId;
-    if (runId === undefined || runId === null || !taskRunIds.has(runId)) continue;
-    const createdAt = DateTime.toEpochMillis(request.createdAt);
-    if (createdAt < oldestCreatedAt) {
-      oldestCreatedAt = createdAt;
-      approval = { requestId: request.id, kind: request.kind, runId };
-    }
-  }
-  return approval;
 }
 
 /** Every task `directAppOwnedChildTasks` can return, so callers load only those. */
@@ -1570,6 +1532,19 @@ const make = Effect.gen(function* () {
    * Blocks for `mode=wait`. A wait that ends without a terminal result, including an
    * interrupted tools/call, upgrades the wake so a later result still reaches the parent.
    */
+  const sentAway = (
+    scope: McpThreadInvocationScope,
+    taskId: NodeId,
+    input: OrchestratorMcpDelegateTaskInput,
+  ) =>
+    releaseDelegateKey.pipe(
+      Effect.andThen(
+        input.mode === "wait"
+          ? awaitTask(scope, taskId, taskId, input.timeoutMs)
+          : readTask(scope, taskId, false, true),
+      ),
+    );
+
   const awaitTask = Effect.fn("OrchestratorMcpService.awaitTask")(function* (
     scope: McpThreadInvocationScope,
     taskId: NodeId,
@@ -2299,9 +2274,7 @@ const make = Effect.gen(function* () {
           ...input,
           target: { ...input.target, environmentId },
         });
-        return yield* input.mode === "wait"
-          ? awaitTask(scope, taskId, taskId, input.timeoutMs)
-          : readTask(scope, taskId, false, true);
+        return yield* sentAway(scope, taskId, input);
       }
       const { scope, parent } = yield* loadThreadCaller(callerScope, "delegate_task");
       const parentRun = parent.runs
@@ -2324,6 +2297,14 @@ const make = Effect.gen(function* () {
         operation: "delegate-task",
       });
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
+      const away =
+        isRetryOfAcceptedDelegation ||
+        input.class !== "light" ||
+        input.clientRequestId === undefined
+          ? undefined
+          : remoteDelegateTaskId(scope, input.clientRequestId);
+      if (away !== undefined && (yield* loadTasks(scope.thread.threadId, [away]))[0]?.remoteChild)
+        return yield* sentAway(scope, away, input);
       const workspace = yield* resolveDelegatedTaskWorkspace(
         { projects, git: gitDriver },
         parent.thread,
@@ -2352,7 +2333,7 @@ const make = Effect.gen(function* () {
       );
       const parentNodeId = parentRun.rootNodeId;
       const childDepth = (yield* delegationDepth(threadManagement, parent.thread)) + 1;
-      const request = (held: boolean) =>
+      const request = (held: boolean, light = false) =>
         threadManagement.dispatch({
           type: "delegated_task.request",
           createdBy: "agent",
@@ -2370,11 +2351,13 @@ const make = Effect.gen(function* () {
           completionWake: completionWakeFor(input, held),
           ...awaitedFor(input),
           ...(held ? { startHeld: true } : {}),
+          ...(light ? { light } : {}),
         });
+      const owner = { parentThreadId: scope.thread.threadId, light: input.class === "light" };
       const result = yield* (
         childStartGate === undefined || isRetryOfAcceptedDelegation
           ? request(false)
-          : childStartGate.admit({ parentThreadId: scope.thread.threadId }, request)
+          : childStartGate.admit(owner, request)
       ).pipe(
         Effect.mapError((error) =>
           error._tag === "ThreadManagementProviderInstanceDisabledError"
@@ -2396,6 +2379,7 @@ const make = Effect.gen(function* () {
       if (prepare !== undefined && !held) {
         yield* Effect.uninterruptible(threadLaunch.prepareRun({ commandId, ...prepare }));
       }
+      yield* releaseDelegateKey;
       if (input.mode === "wait" && !held)
         return yield* awaitTask(scope, taskId, key, input.timeoutMs);
       const read = yield* readTask(scope, taskId, false, true);

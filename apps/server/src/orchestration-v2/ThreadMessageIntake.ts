@@ -107,13 +107,22 @@ function withoutServerMarks(
   return { ...rest, messageId: clientMessageId(rest.messageId) };
 }
 
+function withoutLightMark(
+  command: Extract<OrchestrationV2Command, { readonly type: "delegated_task.request" }>,
+) {
+  const { light: _light, ...rest } = command;
+  return rest;
+}
+
 export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(function* (
   incoming: OrchestrationV2Command,
 ) {
   const command =
     incoming.type === "message.dispatch"
       ? yield* withGuestAttachments(withoutServerMarks(incoming))
-      : incoming;
+      : incoming.type === "delegated_task.request"
+        ? withoutLightMark(incoming)
+        : incoming;
   const threads = yield* ThreadManagement.ThreadManagementService;
   if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
     const config = yield* ServerConfig.ServerConfig;
