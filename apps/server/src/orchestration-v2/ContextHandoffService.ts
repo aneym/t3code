@@ -132,6 +132,33 @@ export function visibleDeltaRunOrdinals(
   return from === Infinity ? { from: 1, to: 1 } : { from, to };
 }
 
+export function selectThreadHistory(input: {
+  readonly threadId: ThreadId;
+  readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
+  readonly runs?: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "status">>;
+  readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+  readonly budget: number;
+}) {
+  const runStatuses = new Map(input.runs?.map((run) => [run.id, run.status]));
+  const coverage = handoffCoverage(input);
+  const selected = selectHistory({
+    messages: input.items.flatMap((item) => {
+      const message = historicalMessage(item);
+      return message === null
+        ? []
+        : [
+            {
+              ...message,
+              ...(item.runId === null ? {} : { runStatus: runStatuses.get(item.runId) }),
+            },
+          ];
+    }),
+    coverage,
+    budget: input.budget,
+  });
+  return { coverage, selected };
+}
+
 /** Drops rolled-back runs and cancelled queued messages, which are not part of the conversation. */
 export function visibleConversationItems(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "attempts">,
@@ -523,24 +550,9 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
               }),
           ),
         );
-      const runStatuses = new Map(input.runs?.map((run) => [run.id, run.status]));
-      const coverage = handoffCoverage({
+      const { coverage, selected } = selectThreadHistory({
         ...input,
         threadId: input.sourceThreadId ?? input.threadId,
-      });
-      const selected = selectHistory({
-        messages: input.items.flatMap((item) => {
-          const message = historicalMessage(item);
-          return message === null
-            ? []
-            : [
-                {
-                  ...message,
-                  ...(item.runId === null ? {} : { runStatus: runStatuses.get(item.runId) }),
-                },
-              ];
-        }),
-        coverage,
         budget: tokenCap,
       });
       return {

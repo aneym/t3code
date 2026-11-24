@@ -91,7 +91,9 @@ const receiptText = (sent: OrchestratorMcpThreadSendResult) =>
 const deliveryText = (sent: OrchestratorMcpThreadSendResult) =>
   sent.delivery === "held"
     ? `Held (${sent.holdReason ?? "manual"}).${receiptText(sent)} ${sent.next ?? "Send with mode auto to start now."}`
-    : `${sent.delivery === "queued" ? "Queued" : sent.delivery === "noted" ? "Noted" : "Sent"}.${receiptText(sent)}${sent.next === undefined ? "" : ` ${sent.next}`}`;
+    : `${sent.delivery === "queued" ? "Queued" : sent.delivery === "noted" ? "Noted" : "Sent"}.${sent.rolled === true ? " Rolled to a fresh session that carries its brief and a summary." : ""}${receiptText(sent)}${sent.next === undefined ? "" : ` ${sent.next}`}`;
+
+const FRESH_CONTEXT = { clear: true, carry: "carry", keep: false } as const;
 
 export const threadSendCommand = Command.make("send", {
   ...projectLocationFlags,
@@ -100,6 +102,12 @@ export const threadSendCommand = Command.make("send", {
   mode: Flag.Literals("mode", ["auto", "queue", "steer", "restart", "note"]).pipe(
     Flag.withDescription("How to deliver the message to the thread."),
     Flag.withDefault("queue"),
+  ),
+  fresh: Flag.Literals("fresh", ["clear", "carry", "keep"]).pipe(
+    Flag.withDescription(
+      "Start a new provider session in the thread: clear drops its earlier context, carry opens with a capped summary, open child tasks and pending background work, keep never starts one. Without it, a send to an idle delegated child with a large context rolls it with carry.",
+    ),
+    Flag.optional,
   ),
   requestId: Flag.String("request-id").pipe(
     Flag.withDescription(
@@ -144,7 +152,15 @@ export const threadSendCommand = Command.make("send", {
           const followWakes = flags.wait ? yield* threadIsIdle(tools, threadId) : false;
           const sent = yield* tools.call(
             "t3_thread_send",
-            { threadId, message, mode: flags.mode, clientRequestId },
+            {
+              threadId,
+              message,
+              mode: flags.mode,
+              ...(Option.isSome(flags.fresh)
+                ? { freshContext: FRESH_CONTEXT[flags.fresh.value] }
+                : {}),
+              clientRequestId,
+            },
             OrchestratorMcpThreadSendResult,
           );
           if (sent.delivery === "held") {

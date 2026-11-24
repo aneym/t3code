@@ -13,6 +13,8 @@ import * as Hex from "effect/encoding/Hex";
 
 import { railsMessageContext } from "@t3tools/shared/composerContextReferences";
 
+import { depthLine } from "./delegatedTaskModes.ts";
+import { delegationDepth } from "./delegationDepth.ts";
 import { mcpMessageSender } from "./messageSender.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
@@ -92,6 +94,12 @@ export const sendToThread = Effect.fn("OrchestratorMcpService.sendToThread")(fun
       );
   }
   const context = railsMessageContext(request.context);
+  const childRoll =
+    request.freshContext === undefined &&
+    (mode === "queue" || mode === "auto") &&
+    target.thread.lineage.relationshipToParent === "subagent"
+      ? { preamble: depthLine(yield* delegationDepth(threadManagement, target.thread)) }
+      : undefined;
   const send = {
     projectId: target.thread.projectId,
     commandId,
@@ -113,7 +121,8 @@ export const sendToThread = Effect.fn("OrchestratorMcpService.sendToThread")(fun
       : threadManagement.sendToThread({
           ...send,
           mode,
-          ...(request.freshContext ? { freshContext: true } : {}),
+          ...(request.freshContext === undefined ? {} : { freshContext: request.freshContext }),
+          ...(childRoll === undefined ? {} : { childRoll }),
         })
   ).pipe(
     Effect.mapError((error) =>
@@ -149,6 +158,7 @@ export const sendToThread = Effect.fn("OrchestratorMcpService.sendToThread")(fun
     ...(result.run.delegatedTaskId === undefined ? {} : { taskId: result.run.delegatedTaskId }),
     status: result.run.status,
     delivery: afterRestart ? "queued" : result.delivery,
+    ...(result.rolled === true ? { rolled: true } : {}),
     ...(afterRestart
       ? { holdReason: "restart" as const, next: "It starts after the server restarts." }
       : {}),
