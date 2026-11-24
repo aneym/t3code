@@ -6076,20 +6076,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     // A live run fork shows its source's history through the fork run without copying it.
     const shownByLiveFork = (threadId: ThreadId, runIdColumn: string) => sql`
-      EXISTS (
-        SELECT 1
+      IFNULL((
+        SELECT MAX(fork_run.ordinal)
         FROM orchestration_v2_projection_threads AS fork
-        JOIN orchestration_v2_projection_runs AS fork_run
+        CROSS JOIN orchestration_v2_projection_runs AS fork_run
           ON fork_run.run_id = json_extract(fork.payload_json, '$.forkedFrom.runId')
-        LEFT JOIN orchestration_v2_projection_runs AS item_run
-          ON item_run.run_id = ${sql.literal(runIdColumn)}
         WHERE fork_run.thread_id = ${threadId}
           AND fork.deleted_at IS NULL
           AND json_extract(fork.payload_json, '$.forkedFrom.type') = 'run'
           AND json_extract(fork.payload_json, '$.forkedFrom.threadId') = ${threadId}
           AND json_extract(fork.payload_json, '$.lineage.sideChat') IS NOT 1
-          AND (${sql.literal(runIdColumn)} IS NULL OR item_run.ordinal <= fork_run.ordinal)
-      )
+      ) >= IFNULL(
+        (SELECT ordinal FROM orchestration_v2_projection_runs WHERE run_id = ${sql.literal(runIdColumn)}),
+        IIF(${sql.literal(runIdColumn)} IS NULL, 0, NULL)
+      ), 0)
     `;
 
     const getThreadAttachmentIds: ProjectionStoreV2Shape["getThreadAttachmentIds"] = (threadId) =>
