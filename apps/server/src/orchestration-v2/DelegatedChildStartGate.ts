@@ -35,10 +35,14 @@ import {
   type ChildOrigin,
   childStartLimits,
   EVERY_CHILD,
+  groupFullText,
   type GroupLimit,
   healthLineFor,
+  isLaneGroup,
   limitedGroups,
+  limitOf,
 } from "./DelegatedChildLimits.ts";
+import { type PlacedChild, tallyChildren } from "./DelegatedChildTally.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
@@ -54,6 +58,7 @@ interface ChildRow {
   readonly provider: string | null;
   readonly parent: string | null;
   readonly requested_at: string;
+  readonly started_at: string | null;
 }
 
 interface ActiveChild extends ChildOrigin {
@@ -157,15 +162,6 @@ const make = Effect.gen(function* () {
     return location?.handle ?? null;
   });
 
-  const groupsOf = Effect.fn("DelegatedChildStartGate.groupsOf")(function* (
-    rootProjectId: string | null,
-    limits: ReadonlyMap<string, GroupLimit>,
-    child: ChildOrigin,
-  ) {
-    const now = yield* Clock.currentTimeMillis;
-    return limitedGroups(limits, [yield* homeOf(rootProjectId), EVERY_CHILD], child, now);
-  });
-
   const rootProjectOf = (threadId: ThreadId) =>
     sql<{ readonly project_id: string }>`
       SELECT root.project_id
@@ -185,7 +181,8 @@ const make = Effect.gen(function* () {
       root.project_id AS root_project_id,
       json_extract(t.payload_json, '$.providerInstanceId') AS provider,
       json_extract(t.payload_json, '$.lineage.parentThreadId') AS parent,
-      r.requested_at
+      r.requested_at,
+      json_extract(r.payload_json, '$.startedAt') AS started_at
     FROM orchestration_v2_projection_runs r
     JOIN orchestration_v2_projection_threads t ON t.thread_id = r.thread_id
     LEFT JOIN orchestration_v2_projection_threads root
@@ -203,7 +200,7 @@ const make = Effect.gen(function* () {
     SELECT s.child_thread_id, root.project_id AS root_project_id,
       json_extract(t.payload_json, '$.providerInstanceId') AS provider,
       json_extract(t.payload_json, '$.lineage.parentThreadId') AS parent,
-      NULL AS requested_at
+      NULL AS started_at
     FROM orchestration_v2_projection_nodes n
       INDEXED BY orchestration_v2_projection_nodes_live_idx
     JOIN orchestration_v2_projection_subagents s ON s.subagent_id = n.node_id
@@ -227,34 +224,28 @@ const make = Effect.gen(function* () {
     activeChildren: ReadonlyArray<ActiveChild>,
     limits: ReadonlyMap<string, GroupLimit>,
   ) {
-    const running = new Map<string, number>();
-    const queued = new Map<string, number>();
-    const groups = new Map<string, ReadonlyArray<string>>();
-    const heldThreads = new Set<string>();
-    const activeThreads = new Map<string, ActiveChild>();
+    const heldThreads = new Set(rows.filter(heldRow).map((row) => row.thread_id));
+    const held: Array<PlacedChild> = [];
+    const live = new Map<string, PlacedChild>();
     for (const row of rows) {
-      const rowGroups = yield* groupsOf(
-        row.root_project_id,
-        limits,
-        heldRow(row) ? { ...row, requested_at: undefined } : row,
-      );
-      groups.set(row.run_id, rowGroups);
-      if (heldRow(row)) {
-        heldThreads.add(row.thread_id);
-        for (const group of rowGroups) queued.set(group, (queued.get(group) ?? 0) + 1);
-      } else activeThreads.set(row.thread_id, { ...row, child_thread_id: row.thread_id });
+      const home = yield* homeOf(row.root_project_id);
+      if (heldRow(row)) held.push({ ...row, id: row.run_id, home, started_at: undefined });
+      else if (!heldThreads.has(row.thread_id))
+        live.set(row.thread_id, {
+          ...row,
+          id: row.thread_id,
+          home,
+          started_at: row.started_at ?? undefined,
+        });
     }
     for (const child of activeChildren) {
       const id = child.child_thread_id;
-      if (!heldThreads.has(id) && !activeThreads.has(id)) activeThreads.set(id, child);
+      if (!heldThreads.has(id) && !live.has(id))
+        live.set(id, { ...child, id, home: yield* homeOf(child.root_project_id) });
     }
-    for (const [threadId, child] of activeThreads) {
-      if (heldThreads.has(threadId)) continue;
-      for (const group of yield* groupsOf(child.root_project_id, limits, child)) {
-        running.set(group, (running.get(group) ?? 0) + 1);
-      }
-    }
-    return { running, queued, groups, active: activeThreads.size, held: heldThreads.size };
+    const now = yield* Clock.currentTimeMillis;
+    const counts = tallyChildren(limits, [...live.values()], held, now);
+    return { ...counts, active: live.size, held: heldThreads.size };
   });
 
   const snapshot = Effect.fn("DelegatedChildStartGate.snapshot")(function* (config: Config) {
@@ -296,24 +287,29 @@ const make = Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       const here = yield* label;
       const rowGroups = counts.groups.get(row.run_id) ?? [];
+      const ahead = held
+        .slice(0, index)
+        .filter((other) =>
+          (counts.groups.get(other.run_id) ?? []).some((group) => rowGroups.includes(group)),
+        ).length;
       const blocked = rowGroups.find(
         (group) =>
           group !== EVERY_CHILD &&
-          (config.limits.get(group)?.perGroup ?? Infinity) <= (counts.running.get(group) ?? 0),
+          (limitOf(config.limits, group)?.perGroup ?? Infinity) <= (counts.running.get(group) ?? 0),
       );
       const reason =
         (yield* breachOf(config, now, rowGroups)) ??
         (rowGroups.includes(EVERY_CHILD) && current.cap !== null && current.active >= current.cap
           ? agentPlacementRoomFull(here, { ...current, free: 0 })
           : undefined) ??
-        (blocked === undefined ? undefined : `All slots for ${blocked} on ${here} are in use.`) ??
-        (index > 0
-          ? `Queued behind ${index} older ${index === 1 ? "child" : "children"} on ${here}.`
+        (blocked === undefined ? undefined : groupFullText(config.limits, blocked, here)) ??
+        (ahead > 0
+          ? `Queued behind ${ahead} older ${ahead === 1 ? "child" : "children"} on ${here}.`
           : `Starting next on ${here}.`);
       const since = Date.parse(row.requested_at);
       return {
         reason,
-        position: index + 1,
+        position: ahead + 1,
         since,
         until: since + config.maxHoldMinutes * 60_000,
       };
@@ -352,7 +348,7 @@ const make = Effect.gen(function* () {
     const rootProject = remote
       ? owner.projectId
       : yield* rootProjectOf(owner.parentThreadId).pipe(Effect.orElseSucceed(() => null));
-    const groups = yield* groupsOf(rootProject, limits, {
+    const groups = limitedGroups(limits, yield* homeOf(rootProject), {
       provider: owner.provider,
       parent: remote ? null : owner.parentThreadId,
     });
@@ -447,7 +443,8 @@ const make = Effect.gen(function* () {
           if ((yield* breachOf(config, now, rowGroups)) !== undefined) continue;
           const open = rowGroups.every((group) => allows(limits, group, running, started, now));
           if (!open) {
-            for (const group of rowGroups) blocked.add(group);
+            const shut = rowGroups.filter((group) => !allows(limits, group, running, started, now));
+            for (const group of shut.every(isLaneGroup) ? shut : rowGroups) blocked.add(group);
             continue;
           }
           released.add(row.run_id);
