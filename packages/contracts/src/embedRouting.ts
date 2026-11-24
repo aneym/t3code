@@ -8,10 +8,10 @@ export const EMBED_KEY_MESSAGE = "t3-embed/key";
 
 export const EMBED_WARM_LIMIT = 8;
 
-export const EmbedCapability = Schema.Literals(["route", "warm"]);
+export const EmbedCapability = Schema.Literals(["route", "warm", "host-voice"]);
 export type EmbedCapability = typeof EmbedCapability.Type;
 
-export const EMBED_CAPABILITIES: ReadonlyArray<EmbedCapability> = ["route", "warm"];
+export const EMBED_CAPABILITIES: ReadonlyArray<EmbedCapability> = ["route", "warm", "host-voice"];
 
 export const EmbedPaintSource = Schema.Literals(["memory", "kept", "live"]);
 export type EmbedPaintSource = typeof EmbedPaintSource.Type;

@@ -129,6 +129,7 @@ html[data-embed="true"] [data-embed-controls-toggle] {
 }
 
 html[data-embed="true"] [data-chat-composer-footer="true"] [aria-label="Start voice input"],
+html[data-embed="true"] [data-chat-composer-footer="true"] [data-embed-host-voice],
 html[data-embed="true"] [data-chat-composer-footer="true"] [data-composer-microphone-picker] {
   flex: none;
   order: 1;
@@ -145,9 +146,18 @@ html[data-embed="true"] [data-chat-composer-footer="true"] [data-composer-microp
 }
 
 html[data-embed="true"] [data-chat-composer-footer="true"] [aria-label="Start voice input"]:hover,
+html[data-embed="true"] [data-chat-composer-footer="true"] [data-embed-host-voice]:hover,
 html[data-embed="true"] [data-chat-composer-footer="true"] [data-composer-microphone-picker]:hover {
   background: color-mix(in oklab, var(--muted) 60%, transparent);
   color: var(--foreground);
+}
+
+html[data-embed="true"]
+  [data-chat-composer-footer="true"]
+  [data-embed-host-voice][aria-pressed="true"] {
+  --control-icon-color: var(--primary);
+  background: color-mix(in oklab, var(--primary) 16%, transparent);
+  color: var(--primary);
 }
 
 html[data-embed="true"] [data-chat-composer-footer="true"] [data-slot="voice-input-pill"] {

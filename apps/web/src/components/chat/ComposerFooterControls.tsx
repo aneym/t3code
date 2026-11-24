@@ -3,6 +3,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { type ComponentProps, memo, useId, useRef, useState } from "react";
 
 import { EmbedControlsToggle } from "../embed/EmbedControlsToggle";
+import { EmbedHostVoiceButton } from "../embed/EmbedHostVoiceButton";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { Menu, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -256,6 +257,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
         keepFullHistory={props.keepFullHistory}
         onToggleKeepFullHistory={props.onToggleKeepFullHistory}
       >
+        <EmbedHostVoiceButton />
         {props.children}
       </ComposerPrimaryActions>
     </>

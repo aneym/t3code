@@ -24,6 +24,7 @@ import { applyEmbedSendResult, setEmbedHostSend } from "./embedHostSend";
 import { applyEmbedPendingSendsMessage } from "./embedPendingSends";
 import { applyEmbedPair } from "./embedPairing";
 import { applyEmbedHostPress, applyEmbedPressResult } from "./embedPress";
+import { applyEmbedHostVoice, readEmbedHostVoiceMessage } from "./embedHostVoice";
 import { watchEmbedUploads } from "./embedUploads";
 import {
   EMBED_COMPOSER_FOCUS_MESSAGE,
@@ -109,6 +110,8 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
       if (composer !== null) applyEmbedComposerMessage(composer);
       const hostSend = readEmbedHostSendMessage(event.data);
       if (hostSend !== null) setEmbedHostSend(hostSend.on);
+      const hostVoice = readEmbedHostVoiceMessage(event.data);
+      if (hostVoice !== null) applyEmbedHostVoice(hostVoice);
       const audience = readEmbedAudienceMessage(event.data);
       if (audience !== null) applyEmbedAudienceMessage(audience);
       const reveal = readEmbedRevealMessage(event.data);

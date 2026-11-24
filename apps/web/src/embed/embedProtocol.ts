@@ -31,6 +31,8 @@ const EMBED_HOST_PRESS_MESSAGE = "t3-embed/host-press";
 const EMBED_PAIR_MESSAGE = "t3-embed/pair";
 export const EMBED_PAIR_RESULT_MESSAGE = "t3-embed/pair-result";
 export const EMBED_CONNECTION_MESSAGE = "t3-embed/connection";
+export const EMBED_HOST_VOICE_MESSAGE = "t3-embed/host-voice";
+export const EMBED_HOST_VOICE_PRESS_MESSAGE = "t3-embed/host-voice-press";
 
 export type EmbedPendingSendAction = "retry" | "discard";
 
@@ -138,6 +140,7 @@ export type EmbedOutboundMessage =
     }
   | { readonly type: typeof EMBED_COMPOSER_FOCUS_MESSAGE; readonly focused: boolean }
   | { readonly type: typeof EMBED_CONTROLS_MESSAGE; readonly shown: boolean }
+  | { readonly type: typeof EMBED_HOST_VOICE_PRESS_MESSAGE }
   | {
       readonly type: typeof EMBED_PENDING_SEND_ACTION_MESSAGE;
       readonly thread: string;
