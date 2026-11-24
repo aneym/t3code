@@ -134,5 +134,5 @@ export const healthLineFor = (
   line: AgentPlacementHealthLine,
 ): AgentPlacementHealthLine =>
   groups.some((group) => limits.get(group)?.loadLine === false)
-    ? { ...line, maxLoadPerCore: Infinity }
+    ? { ...line, maxLoadPerCore: Infinity, maxCpuPressure: null }
     : line;
