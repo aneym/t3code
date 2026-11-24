@@ -149,6 +149,7 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import { resolveDelegatedTaskWorkspace } from "./delegatedTaskWorkspace.ts";
+import { completionWakeFor, delegatedAdmission } from "./delegatedAdmission.ts";
 import { recentThreadRuns, runExecutedModel } from "./threadRunSummary.ts";
 import { loadThreadReadRecords } from "./threadReadRecords.ts";
 import { recordTaskCancelAndStop } from "./taskCancelStop.ts";
@@ -2366,7 +2367,7 @@ const make = Effect.gen(function* () {
           runtimeMode,
           interactionMode,
           ...workspace.command,
-          completionWake: input.mode === "wait" ? "settled_only" : "always",
+          completionWake: completionWakeFor(input, held),
           ...awaitedFor(input),
           ...(held ? { startHeld: true } : {}),
         });
@@ -2384,41 +2385,21 @@ const make = Effect.gen(function* () {
               ),
         ),
       );
-      const taskEvent = result.storedEvents.find(
-        (stored) =>
-          stored.event.type === "subagent.updated" && stored.event.payload.origin === "app_owned",
-      );
-      if (taskEvent?.event.type !== "subagent.updated") {
+      const admitted = delegatedAdmission(result.storedEvents);
+      if (admitted === undefined) {
         return yield* failure(
           "orchestration_error",
           "Delegated task command did not produce a task projection.",
         );
       }
-      const taskId = taskEvent.event.payload.id;
-      const childThreadId = taskEvent.event.payload.childThreadId;
-      const childRunEvent = result.storedEvents.find(
-        (stored) => stored.event.type === "run.created" && stored.event.threadId === childThreadId,
-      );
-      if (
-        childThreadId !== null &&
-        childRunEvent?.event.type === "run.created" &&
-        childRunEvent.event.payload.workspacePreparation !== undefined &&
-        !result.storedEvents.some(
-          ({ event }) => event.type === "run.updated" && event.payload.childStartHeld === true,
-        )
-      ) {
-        yield* Effect.uninterruptible(
-          threadLaunch.prepareRun({
-            commandId,
-            threadId: childThreadId,
-            runId: childRunEvent.event.payload.id,
-          }),
-        );
+      const { taskId, prepare, held } = admitted;
+      if (prepare !== undefined && !held) {
+        yield* Effect.uninterruptible(threadLaunch.prepareRun({ commandId, ...prepare }));
       }
-
-      return yield* input.mode === "wait"
-        ? awaitTask(scope, taskId, key, input.timeoutMs)
-        : readTask(scope, taskId, false, true);
+      if (input.mode === "wait" && !held)
+        return yield* awaitTask(scope, taskId, key, input.timeoutMs);
+      const read = yield* readTask(scope, taskId, false, true);
+      return input.mode === "wait" ? { ...read, waitSkipped: true as const } : read;
     }),
     taskStatus: Effect.fn("OrchestratorMcpService.taskStatus")(function* (callerScope, taskId) {
       const scope = yield* requireThreadScope(callerScope, "task_status");
