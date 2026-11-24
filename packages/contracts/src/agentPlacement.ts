@@ -11,6 +11,11 @@ export const DEFAULT_AGENT_PLACEMENT_HEALTH_LINE = {
   maxServerEventLoopUtilization: 0.8,
 };
 
+const PressureLine = Schema.Finite.check(
+  Schema.isGreaterThan(0),
+  Schema.isLessThanOrEqualTo(100),
+).pipe(Schema.NullOr, Schema.optionalKey);
+
 export const AgentPlacementHealthLine = Schema.Struct({
   maxLoadPerCore: Schema.Finite.check(Schema.isGreaterThan(0)).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_AGENT_PLACEMENT_HEALTH_LINE.maxLoadPerCore)),
@@ -32,6 +37,8 @@ export const AgentPlacementHealthLine = Schema.Struct({
       Effect.succeed(DEFAULT_AGENT_PLACEMENT_HEALTH_LINE.maxServerEventLoopUtilization),
     ),
   ),
+  maxCpuPressure: PressureLine,
+  maxMemoryPressure: PressureLine,
 });
 export type AgentPlacementHealthLine = typeof AgentPlacementHealthLine.Type;
 
@@ -61,6 +68,8 @@ export const AgentPlacementScore = Schema.Struct({
   loadPerCore: Schema.NullOr(Schema.Finite),
   availableMemoryRatio: Schema.NullOr(Schema.Finite),
   freeDiskBytes: Schema.NullOr(Schema.Finite),
+  cpuPressure: Schema.optionalKey(Schema.Finite),
+  memoryPressure: Schema.optionalKey(Schema.Finite),
   skipped: Schema.optionalKey(Schema.String),
   note: Schema.optionalKey(Schema.String),
   room: Schema.optionalKey(AgentPlacementRoom),
@@ -90,6 +99,11 @@ export const AgentPlacementProviders = Schema.Array(
 const GIB = 1024 * 1024 * 1024;
 const UNKNOWN_RATIO = 0.1;
 const percent = (ratio: number) => `${Math.round(ratio * 100)}%`;
+const pressure = (value: number) => `${Number(value.toFixed(2))}%`;
+
+function cpuPressureLine(resources: HostResourcesSnapshot, line: AgentPlacementHealthLine) {
+  return resources.cpuPressure == null ? undefined : (line.maxCpuPressure ?? undefined);
+}
 
 export function agentPlacementRoomFull(label: string, room: AgentPlacementRoom) {
   return room.cap !== null && room.free === 0
@@ -110,10 +124,21 @@ export function agentPlacementHealthBreach(
       ? null
       : resources.availableMemoryBytes / resources.totalMemoryBytes;
   const freeDiskBytes = resources.freeDiskBytes ?? null;
-  if (loadPerCore !== null && loadPerCore > line.maxLoadPerCore)
+  const cpuPressure = resources.cpuPressure ?? null;
+  const memoryPressure = resources.memoryPressure ?? null;
+  const cpuLine = cpuPressureLine(resources, line);
+  if (cpuLine !== undefined && cpuPressure !== null && cpuPressure > cpuLine)
+    return `CPU pressure ${pressure(cpuPressure)} is over the health line ${pressure(cpuLine)}.`;
+  if (cpuLine === undefined && loadPerCore !== null && loadPerCore > line.maxLoadPerCore)
     return `Load per core ${loadPerCore.toFixed(2)} is over the health line ${line.maxLoadPerCore}.`;
   if (availableMemoryRatio !== null && availableMemoryRatio < line.minAvailableMemoryRatio)
     return `Available memory ${percent(availableMemoryRatio)} is under the health line ${percent(line.minAvailableMemoryRatio)}.`;
+  if (
+    line.maxMemoryPressure != null &&
+    memoryPressure !== null &&
+    memoryPressure > line.maxMemoryPressure
+  )
+    return `Memory pressure ${pressure(memoryPressure)} is over the health line ${pressure(line.maxMemoryPressure)}.`;
   if (
     resources.serverEventLoopUtilization !== undefined &&
     resources.serverEventLoopUtilization > line.maxServerEventLoopUtilization
@@ -156,6 +181,8 @@ export function scoreAgentPlacement(input: {
       ? null
       : resources.availableMemoryBytes / resources.totalMemoryBytes;
   const freeDiskBytes = resources?.freeDiskBytes ?? null;
+  const cpuPressure = resources?.cpuPressure ?? null;
+  const memoryPressure = resources?.memoryPressure ?? null;
   const base = {
     environmentId: input.environmentId,
     label: input.label,
@@ -163,6 +190,8 @@ export function scoreAgentPlacement(input: {
     loadPerCore,
     availableMemoryRatio,
     freeDiskBytes,
+    ...(cpuPressure === null ? {} : { cpuPressure }),
+    ...(memoryPressure === null ? {} : { memoryPressure }),
     ...(room === undefined ? {} : { room }),
   };
   const skip = (skipped: string): AgentPlacementScore => ({ ...base, score: 0, skipped });
@@ -180,12 +209,17 @@ export function scoreAgentPlacement(input: {
   const totalDiskBytes = resources.totalDiskBytes ?? 0;
   const diskRatio =
     freeDiskBytes !== null && totalDiskBytes > 0 ? freeDiskBytes / totalDiskBytes : null;
+  const cpuLine = cpuPressureLine(resources, line);
   const unknown = [
-    ...(loadPerCore === null ? ["load average"] : []),
+    ...(cpuLine === undefined && loadPerCore === null ? ["load average"] : []),
     ...(diskRatio === null ? ["free disk"] : []),
   ];
   const freeCoreRatio =
-    loadPerCore === null ? UNKNOWN_RATIO : Math.max(0, 1 - loadPerCore / line.maxLoadPerCore);
+    cpuLine !== undefined && cpuPressure !== null
+      ? Math.max(0, 1 - cpuPressure / cpuLine)
+      : loadPerCore === null
+        ? UNKNOWN_RATIO
+        : Math.max(0, 1 - loadPerCore / line.maxLoadPerCore);
   const share = room?.cap != null && room.free !== null ? room.free / room.cap : 1;
   const score =
     share *
