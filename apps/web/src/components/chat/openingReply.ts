@@ -38,6 +38,7 @@ export function replyIds(
   if (enabled !== true) return NONE;
   const ids = new Set<string>();
   let open = false;
+  let runId: string | undefined;
   let attemptId: string | undefined;
   for (const entry of entries) {
     if (
@@ -45,8 +46,20 @@ export function replyIds(
       timelineEntryStartsResponse(entry)
     ) {
       open = true;
+      runId = undefined;
       attemptId = undefined;
       continue;
+    }
+    const entryRunId =
+      entry.kind === "message"
+        ? entry.message.runId
+        : entry.kind === "work"
+          ? entry.entry.runId
+          : null;
+    if (entryRunId != null && entryRunId !== runId) {
+      open = true;
+      runId = entryRunId;
+      attemptId = undefined;
     }
     if (entry.attempt !== undefined && entry.attempt.id !== attemptId) {
       if (attemptId !== undefined) open = true;
@@ -71,7 +84,6 @@ export function unfoldReplies<
   Fold extends {
     readonly anchorEntryId: string;
     readonly hiddenEntryIds: ReadonlySet<string>;
-    readonly entryIds?: ReadonlySet<string>;
   },
 >(
   folds: ReadonlyMap<string, Fold>,
@@ -86,7 +98,7 @@ export function unfoldReplies<
   const next = new Map<string, Fold>();
   for (const fold of folds.values()) {
     let openingIndex = -1;
-    for (const id of fold.entryIds ?? fold.hiddenEntryIds) {
+    for (const id of fold.hiddenEntryIds) {
       const index = openingIndexById.get(id);
       if (index !== undefined && (openingIndex < 0 || index < openingIndex)) openingIndex = index;
     }

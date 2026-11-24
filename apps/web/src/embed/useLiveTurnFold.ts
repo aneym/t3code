@@ -28,13 +28,18 @@ function liveAnswerIndex(turn: ReadonlyArray<MessagesTimelineRow>): number {
   return -1;
 }
 
+const onlyThinking = (row: MessagesTimelineRow) =>
+  (row.kind === "work" ? row.groupedEntries : row.kind === "work-live" ? [row.entry] : []).every(
+    (entry) => entry.itemType === "reasoning",
+  ) && row.kind !== "work-toggle";
+
 function openingReplyRows(turn: ReadonlyArray<MessagesTimelineRow>): ReadonlySet<number> {
   const kept = new Set<number>();
   let open = true;
   for (const [index, row] of turn.entries()) {
     if (row.kind === "message" && row.message.role === "user") {
       open = true;
-    } else if (STEPS.has(row.kind)) {
+    } else if (STEPS.has(row.kind) && !onlyThinking(row)) {
       open = false;
     } else if (open && row.kind === "message" && row.message.role === "assistant") {
       if (!row.message.streaming && row.message.text.trim() !== "") kept.add(index);
