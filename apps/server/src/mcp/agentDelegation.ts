@@ -8,6 +8,7 @@ import {
 import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import {
+  ChildProvider,
   ClaimedSlot,
   type ClaimResult,
   SPILL_REFUSED,
@@ -138,7 +139,9 @@ export const delegate = Effect.fn("AgentDelegation.delegate")(function* (
     (yield* placement.value.enabled);
   const input = yield* resolveRepository(request, scope.environmentId, placed);
   if (!placed || Option.isNone(placement))
-    return yield* withHold(yield* service.delegateTask(scope, input));
+    return yield* withHold(
+      yield* withProvider(service.delegateTask(scope, input), input.target?.providerInstanceId),
+    );
   const caller = yield* readCaller();
   const inherited = caller.caller?.modelSelection;
   const settings = yield* Effect.serviceOption(Settings.ServerSettingsService);
@@ -173,7 +176,10 @@ export const delegate = Effect.fn("AgentDelegation.delegate")(function* (
     current?.agentPlacementSpillWhenFull === true &&
       gate !== undefined &&
       parentThreadId !== undefined
-      ? gate.claim({ parentThreadId })
+      ? gate.claim({
+          parentThreadId,
+          ...(instanceId === undefined ? {} : { provider: instanceId }),
+        })
       : Effect.succeed<ClaimResult>({}),
     (claim) =>
       Effect.gen(function* () {
@@ -188,13 +194,17 @@ export const delegate = Effect.fn("AgentDelegation.delegate")(function* (
           spill,
           release: unclaim(claim.token),
         });
+        const owned = withProvider(placing, instanceId);
         return yield* claim.token === undefined
-          ? placing
-          : placing.pipe(Effect.provideService(ClaimedSlot, { token: claim.token }));
+          ? owned
+          : owned.pipe(Effect.provideService(ClaimedSlot, { token: claim.token }));
       }),
     (claim) => unclaim(claim.token),
   );
 });
+
+const withProvider = <A, E, R>(effect: Effect.Effect<A, E, R>, instanceId: string | undefined) =>
+  instanceId === undefined ? effect : Effect.provideService(effect, ChildProvider, { instanceId });
 
 const refused = (error: { readonly message: string }) => error.message.startsWith(SPILL_REFUSED);
 
