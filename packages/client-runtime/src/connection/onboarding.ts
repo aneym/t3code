@@ -224,7 +224,6 @@ const prepareAlternateRoutes = Effect.fn(
             Effect.map((route) => [route]),
             Effect.catch((error) =>
               Effect.logWarning("Could not add a paired environment's other address.", {
-                origin: new URL(httpBaseUrl).origin,
                 error: error._tag,
                 reason: "reason" in error ? error.reason : null,
               }).pipe(Effect.as([])),

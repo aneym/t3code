@@ -194,17 +194,64 @@ function deleteEntries(view: IDBObjectStore, meta: IDBObjectStore, metas: Iterab
   }
 }
 
+interface StoredView {
+  readonly generation: number;
+  readonly payload: string;
+}
+
+const viewGeneration = (stored: unknown): number | null =>
+  typeof stored === "string"
+    ? 0
+    : typeof stored === "object" &&
+        stored !== null &&
+        "generation" in stored &&
+        typeof stored.generation === "number"
+      ? stored.generation
+      : null;
+
+const viewPayload = (stored: unknown): string | undefined =>
+  typeof stored === "string"
+    ? stored
+    : typeof stored === "object" &&
+        stored !== null &&
+        "payload" in stored &&
+        typeof stored.payload === "string"
+      ? stored.payload
+      : undefined;
+
+function withFrameAccess(
+  access: IDBObjectStore,
+  environmentId: string,
+  then: (generation: number) => void,
+): () => void {
+  const known = frameGenerations.get(environmentId);
+  let seen: number | undefined;
+  readAccess(access, environmentId, (stored) => {
+    seen = stored.generation;
+    const generation = known ?? stored.generation;
+    if (sealed || isRefused(stored) || stored.generation !== generation) return;
+    then(generation);
+  });
+  return () => {
+    if (seen !== undefined && !frameGenerations.has(environmentId)) {
+      frameGenerations.set(environmentId, seen);
+    }
+  };
+}
+
 export function loadKeptView(environmentId: string, threadId: string): Promise<string | undefined> {
   return transact("readonly", (view, _meta, access) => {
     let result: string | undefined;
-    readAccess(access, environmentId, (stored) => {
-      if (isRefused(stored)) return;
+    const adopt = withFrameAccess(access, environmentId, (generation) => {
       const request = view.get(keyOf(environmentId, threadId));
       request.addEventListener("success", () => {
-        if (typeof request.result === "string") result = request.result;
+        if (viewGeneration(request.result) === generation) result = viewPayload(request.result);
       });
     });
-    return () => result;
+    return () => {
+      adopt();
+      return result;
+    };
   });
 }
 
@@ -215,26 +262,23 @@ export function saveKeptView(
   now = Date.now(),
 ): Promise<void> {
   return transact("readwrite", (view, meta, access) => {
-    let refused = false;
-    readAccess(access, environmentId, (stored) => {
-      refused = isRefused(stored);
-    });
     const key = keyOf(environmentId, threadId);
-    const existing = meta.get(key);
-    existing.addEventListener("success", () => {
-      if (sealed || refused) return;
-      const previous = existing.result as KeptViewMeta | undefined;
-      view.put(payload, key);
-      meta.put(
-        { environmentId, threadId, length: payload.length, shownAt: previous?.shownAt ?? now },
-        key,
-      );
-      const all = meta.getAll();
-      all.addEventListener("success", () =>
-        deleteEntries(view, meta, pickKeptViewEvictions(all.result as KeptViewMeta[])),
-      );
+    const adopt = withFrameAccess(access, environmentId, (generation) => {
+      const existing = meta.get(key);
+      existing.addEventListener("success", () => {
+        const previous = existing.result as KeptViewMeta | undefined;
+        view.put({ generation, payload } satisfies StoredView, key);
+        meta.put(
+          { environmentId, threadId, length: payload.length, shownAt: previous?.shownAt ?? now },
+          key,
+        );
+        const all = meta.getAll();
+        all.addEventListener("success", () =>
+          deleteEntries(view, meta, pickKeptViewEvictions(all.result as KeptViewMeta[])),
+        );
+      });
     });
-    return () => undefined;
+    return adopt;
   });
 }
 
