@@ -2,7 +2,10 @@ import type { AgentPlacementHealthLine } from "@t3tools/contracts";
 import { readAgentMainThreads } from "../agents/AgentHomeFiles.ts";
 
 export const EVERY_CHILD = "*";
-const MAIN_CHILDREN = "agent-main";
+export const FAST_POOL = "*fast";
+const LANE = "*lane";
+const LANE_PREFIX = `${LANE}:`;
+const MAIN_THREADS = "agent-main";
 
 export interface GroupLimit {
   readonly perGroup: number | undefined;
@@ -17,10 +20,10 @@ export interface GroupLimit {
 export interface ChildOrigin {
   readonly provider?: string | null | undefined;
   readonly parent?: string | null | undefined;
-  readonly requested_at?: string | null | undefined;
+  readonly started_at?: string | null | undefined;
 }
 
-type Limits = ReadonlyMap<string, GroupLimit>;
+export type Limits = ReadonlyMap<string, GroupLimit>;
 
 const NONE: ReadonlySet<string> = new Set();
 
@@ -37,7 +40,8 @@ export const childStartLimits = async (
   const limits = new Map<string, GroupLimit>();
   if (!isRecord(raw)) return limits;
   let mains: ReadonlySet<string> | undefined;
-  const readMains = async () => (mains ??= await mainThreads().catch(() => NONE));
+  const threadsOf = async (spec: unknown) =>
+    spec === MAIN_THREADS ? (mains ??= await mainThreads().catch(() => NONE)) : NONE;
   for (const [group, entry] of Object.entries(raw)) {
     if (!isRecord(entry)) continue;
     const fastMinutes = positiveInt(entry.fastMinutes, 1);
@@ -49,8 +53,8 @@ export const childStartLimits = async (
           ? entry.except.filter((name): name is string => typeof name === "string")
           : [],
       ),
-      exceptParents: entry.exceptParents === MAIN_CHILDREN ? await readMains() : NONE,
-      parents: group === MAIN_CHILDREN ? await readMains() : NONE,
+      exceptParents: await threadsOf(entry.exceptParents),
+      parents: group === FAST_POOL ? await threadsOf(entry.parents) : NONE,
       fastMs: fastMinutes === undefined ? undefined : fastMinutes * 60_000,
       loadLine: entry.loadLine !== false,
     };
@@ -59,32 +63,45 @@ export const childStartLimits = async (
   return limits;
 };
 
+const isFastMember = (pool: GroupLimit, child: ChildOrigin) =>
+  child.parent != null && pool.parents.has(child.parent);
+
+export const isLaneGroup = (group: string) => group.startsWith(LANE_PREFIX);
+
+export const limitOf = (limits: Limits, group: string) =>
+  limits.get(isLaneGroup(group) ? LANE : group);
+
 export const limitedGroups = (
   limits: Limits,
-  candidates: ReadonlyArray<string | null>,
+  home: string | null,
   child: ChildOrigin,
-  now: number,
-) => {
-  const fast = limits.get(MAIN_CHILDREN);
-  const since = child.requested_at;
-  const old =
-    fast?.fastMs !== undefined &&
-    typeof since === "string" &&
-    now - Date.parse(since) > fast.fastMs;
-  const from = (parents: ReadonlySet<string>) =>
-    !old && child.parent != null && parents.has(child.parent);
-  const groups = candidates.filter((group): group is string => {
-    if (group === null || group === MAIN_CHILDREN) return false;
-    const limit = limits.get(group);
-    return (
-      limit !== undefined &&
-      (child.provider == null || !limit.except.has(child.provider)) &&
-      !from(limit.exceptParents)
-    );
+  aged = false,
+): ReadonlyArray<string> => {
+  const pool = limits.get(FAST_POOL);
+  const pooled =
+    !aged && pool !== undefined && child.started_at !== null && isFastMember(pool, child);
+  const spared = (limit: GroupLimit) =>
+    (child.provider != null && limit.except.has(child.provider)) ||
+    (!aged && child.parent != null && limit.exceptParents.has(child.parent));
+  const groups = [home, EVERY_CHILD].filter((group): group is string => {
+    const limit = group === null ? undefined : limits.get(group);
+    return limit !== undefined && !spared(limit);
   });
-  return fast !== undefined && since !== null && from(fast.parents)
-    ? [...groups, MAIN_CHILDREN]
-    : groups;
+  const every = limits.get(EVERY_CHILD);
+  const laned =
+    !pooled && limits.has(LANE) && child.parent != null && (every === undefined || !spared(every));
+  return [
+    ...groups,
+    ...(pooled ? [FAST_POOL] : []),
+    ...(laned ? [`${LANE_PREFIX}${child.parent}`] : []),
+  ];
+};
+
+export const agedSince = (limits: Limits, child: ChildOrigin, now: number) => {
+  const fastMs = limits.get(FAST_POOL)?.fastMs;
+  if (fastMs === undefined || typeof child.started_at !== "string") return undefined;
+  const since = Date.parse(child.started_at);
+  return now - since > fastMs ? since : undefined;
 };
 
 export const allows = (
@@ -94,12 +111,21 @@ export const allows = (
   started: ReadonlyMap<string, number>,
   now: number,
 ) => {
-  const limit = limits.get(group);
+  const limit = limitOf(limits, group);
   return (
     limit === undefined ||
     ((limit.perGroup === undefined || (running.get(group) ?? 0) < limit.perGroup) &&
       (limit.staggerMs === undefined || now - (started.get(group) ?? 0) >= limit.staggerMs))
   );
+};
+
+export const groupFullText = (limits: Limits, group: string, here: string) => {
+  if (group === FAST_POOL) return `All fast slots on ${here} are in use.`;
+  if (!isLaneGroup(group)) return `All slots for ${group} on ${here} are in use.`;
+  const slots = limits.get(LANE)?.perGroup ?? 0;
+  return slots === 1
+    ? `This lane's 1 slot on ${here} is in use.`
+    : `All ${slots} of this lane's slots on ${here} are in use.`;
 };
 
 export const healthLineFor = (
