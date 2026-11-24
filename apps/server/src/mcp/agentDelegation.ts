@@ -22,6 +22,8 @@ import * as Projects from "../project/ProjectService.ts";
 import { projectsAtAgentHome } from "../project/ProjectsByRepository.ts";
 import * as Settings from "../serverSettings.ts";
 import { delegatedChildDefaultModel } from "./delegatedChildModel.ts";
+import { withDelegateKey } from "./delegateKeyLock.ts";
+import * as DelegateRetry from "./delegateRetry.ts";
 import { withHold } from "./delegatedHold.ts";
 import * as Invocation from "./McpInvocationContext.ts";
 import * as Orchestrator from "./OrchestratorMcpService.ts";
@@ -126,18 +128,69 @@ const resolveRepository = Effect.fn("AgentDelegation.resolveRepository")(functio
   return { ...input, target: { ...target, projectId } };
 });
 
+const LIGHT_STAY = "Light tasks stay on this machine.";
+
+const lightRefusal = (input: OrchestratorMcpDelegateTaskInput, here: string) =>
+  input.isolation === "worktree"
+    ? 'Light tasks run in the parent\'s workspace. Drop isolation "worktree", or drop class "light" to run it in a worktree.'
+    : input.target?.environmentId !== undefined && input.target.environmentId !== here
+      ? 'Light tasks stay on this machine. Drop target.environmentId, or drop class "light" to send it to another machine.'
+      : undefined;
+
+const withoutTarget = (input: OrchestratorMcpDelegateTaskInput) => {
+  if (input.target === undefined) return input;
+  const { environmentId: _environmentId, projectId: _projectId, ...target } = input.target;
+  return { ...input, target };
+};
+
 export const delegate = Effect.fn("AgentDelegation.delegate")(function* (
   request: OrchestratorMcpDelegateTaskInput,
 ) {
   const scope = yield* Invocation.McpInvocationContext;
   const service = yield* Orchestrator.OrchestratorMcpService;
+  const key = request.clientRequestId;
+  const parent = scope.thread?.threadId;
+  if (request.class !== "light" || key === undefined || parent === undefined)
+    return yield* delegateNew(scope, service, request);
+  return yield* withDelegateKey(
+    `${parent}\u0000${key}`,
+    Effect.gen(function* () {
+      if ((yield* DelegateRetry.delegateRetryOf(scope, key)) === undefined)
+        return yield* delegateNew(scope, service, request);
+      const input = withoutTarget(request);
+      return yield* withHold(
+        yield* withProvider(service.delegateTask(scope, input), input.target?.providerInstanceId),
+      );
+    }),
+  );
+});
+
+const delegateNew = Effect.fn("AgentDelegation.delegateNew")(function* (
+  scope: Invocation.McpInvocationScope,
+  service: Orchestrator.OrchestratorMcpService["Service"],
+  request: OrchestratorMcpDelegateTaskInput,
+) {
   const placement = yield* Effect.serviceOption(AgentPlacement.AgentPlacement);
+  const gate = Option.getOrUndefined(yield* Effect.serviceOption(Gate.DelegatedChildStartGate));
+  const parentThreadId = scope.thread?.threadId;
+  const light =
+    request.class === "light" &&
+    gate !== undefined &&
+    parentThreadId !== undefined &&
+    (yield* gate.marksLight(parentThreadId));
+  const refusal = light ? lightRefusal(request, scope.environmentId) : undefined;
+  if (refusal !== undefined) return yield* repositoryFailure(refusal);
+  const { class: _class, ...plain } = request;
   const placed =
     request.target?.environmentId === undefined &&
     scope.linkedEnvironments !== false &&
     Option.isSome(placement) &&
     (yield* placement.value.enabled);
-  const input = yield* resolveRepository(request, scope.environmentId, placed);
+  const input = yield* resolveRepository(
+    light ? request : plain,
+    scope.environmentId,
+    placed && !light,
+  );
   if (!placed || Option.isNone(placement))
     return yield* withHold(
       yield* withProvider(service.delegateTask(scope, input), input.target?.providerInstanceId),
@@ -168,12 +221,11 @@ export const delegate = Effect.fn("AgentDelegation.delegate")(function* (
     instanceId === undefined || model === undefined
       ? undefined
       : { instanceId, model, ...(options === undefined ? {} : { options }) };
-  const gate = Option.getOrUndefined(yield* Effect.serviceOption(Gate.DelegatedChildStartGate));
-  const parentThreadId = scope.thread?.threadId;
   const unclaim = (token: number | undefined) =>
     token === undefined || gate === undefined ? Effect.void : gate.unclaim(token);
   return yield* Effect.acquireUseRelease(
     current?.agentPlacementSpillWhenFull === true &&
+      !light &&
       gate !== undefined &&
       parentThreadId !== undefined
       ? gate.claim({
@@ -184,8 +236,9 @@ export const delegate = Effect.fn("AgentDelegation.delegate")(function* (
     (claim) =>
       Effect.gen(function* () {
         const spill = claim.wouldHold !== undefined;
-        const stayReason =
-          modelSelection === undefined
+        const stayReason = light
+          ? LIGHT_STAY
+          : modelSelection === undefined
             ? "No model to match across environments; name target.model to let it move."
             : yield* localOnlyReason(input, caller.caller, spill);
         const placing = place(scope, service, placement.value, input, {

@@ -49,6 +49,7 @@ import { delegationDepth } from "../mcp/delegationDepth.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { delegatedChildDefaultModel, remoteChildOptions } from "../mcp/delegatedChildModel.ts";
+import { remoteDelegateCommandId } from "../mcp/delegateRetry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
@@ -321,9 +322,7 @@ const make = Effect.gen(function* () {
         (yield* delegationDepth(threads, parent.thread)) + 1,
       );
       const title = input.title ?? parent.thread.title;
-      const commandId = CommandId.make(
-        `command:mcp:${encodeURIComponent(scope.requestNamespace)}:remote-delegate:${encodeURIComponent(key)}`,
-      );
+      const commandId = remoteDelegateCommandId(scope, key);
       const { launched, worktreeBase } = yield* worktrees.launch(
         scope,
         target.environmentId,

@@ -18,12 +18,14 @@ export interface GroupLimit {
 
 interface Membership {
   readonly parents: ReadonlySet<string> | undefined;
+  readonly class: string | undefined;
 }
 
 export interface ChildOrigin {
   readonly provider?: string | null | undefined;
   readonly parent?: string | null | undefined;
   readonly started_at?: string | null | undefined;
+  readonly class?: string | null | undefined;
 }
 
 export type Limits = ReadonlyMap<string, GroupLimit>;
@@ -37,7 +39,7 @@ const isPoolName = (group: string) =>
   group.startsWith(EVERY_CHILD) && group !== EVERY_CHILD && group !== LANE;
 
 const declaresMembership = (entry: Readonly<Record<string, unknown>>) =>
-  entry.parents !== undefined;
+  entry.parents !== undefined || entry.class !== undefined;
 
 const isMember = (members: Membership, child: ChildOrigin) =>
   members.parents !== undefined && child.parent != null && members.parents.has(child.parent);
@@ -68,7 +70,10 @@ export const childStartLimits = async (
       exceptParents: await threadsOf(entry.exceptParents),
       members:
         isPoolName(group) && declaresMembership(entry)
-          ? { parents: entry.parents === undefined ? undefined : await threadsOf(entry.parents) }
+          ? {
+              parents: entry.parents === undefined ? undefined : await threadsOf(entry.parents),
+              class: typeof entry.class === "string" ? entry.class : undefined,
+            }
           : undefined,
       fastMs: fastMinutes === undefined ? undefined : fastMinutes * 60_000,
       loadLine: entry.loadLine !== false,
@@ -78,8 +83,25 @@ export const childStartLimits = async (
   return limits;
 };
 
+const classPoolOf = (limits: Limits, cls: string | null | undefined) => {
+  if (cls == null) return undefined;
+  for (const [group, limit] of limits) if (limit.members?.class === cls) return group;
+  return undefined;
+};
+
+const inClassPool = (limits: Limits, child: ChildOrigin) =>
+  classPoolOf(limits, child.class) !== undefined;
+
+const inParentsPool = (limits: Limits, parent: string) =>
+  [...limits.values()].some((limit) => limit.members?.parents?.has(parent) === true);
+
+export const marksClass = (limits: Limits, cls: string, parent: string) =>
+  classPoolOf(limits, cls) !== undefined && !inParentsPool(limits, parent);
+
 const poolOf = (limits: Limits, child: ChildOrigin) => {
   if (child.started_at === null) return undefined;
+  const classed = classPoolOf(limits, child.class);
+  if (classed !== undefined) return classed;
   for (const [group, limit] of limits) {
     if (limit.members !== undefined && isMember(limit.members, child)) return group;
   }
@@ -98,16 +120,18 @@ export const limitedGroups = (
   aged = false,
 ): ReadonlyArray<string> => {
   const pool = aged ? undefined : poolOf(limits, child);
+  const classed = !aged && inClassPool(limits, child);
   const spared = (limit: GroupLimit) =>
     (child.provider != null && limit.except.has(child.provider)) ||
     (!aged && child.parent != null && limit.exceptParents.has(child.parent));
   const groups = [home, EVERY_CHILD].filter((group): group is string => {
     const limit = group === null ? undefined : limits.get(group);
-    return limit !== undefined && !spared(limit);
+    return limit !== undefined && !(classed && group === EVERY_CHILD) && !spared(limit);
   });
   const every = limits.get(EVERY_CHILD);
   const laned =
     pool === undefined &&
+    !classed &&
     limits.has(LANE) &&
     child.parent != null &&
     (every === undefined || !spared(every));

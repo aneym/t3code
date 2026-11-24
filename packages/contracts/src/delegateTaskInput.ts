@@ -66,5 +66,11 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
     }),
   ),
   interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
+  class: Schema.optional(
+    Schema.Literal("light").annotate({
+      description:
+        "'light': a quick housekeeping task that starts at once in a pool of its own on this machine, even when builds wait on load. Shared isolation only; it stays here.",
+    }),
+  ),
 });
 export type OrchestratorMcpDelegateTaskInput = typeof OrchestratorMcpDelegateTaskInput.Type;

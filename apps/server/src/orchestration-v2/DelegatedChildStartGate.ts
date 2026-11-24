@@ -32,7 +32,6 @@ import {
 } from "./DelegatedChildClaims.ts";
 import {
   allows,
-  type ChildOrigin,
   childStartLimits,
   EVERY_CHILD,
   groupFullText,
@@ -40,35 +39,24 @@ import {
   healthLineFor,
   limitedGroups,
   limitOf,
+  type Limits,
+  marksClass,
 } from "./DelegatedChildLimits.ts";
+import { type ActiveChild, type ChildRow, childQueries } from "./DelegatedChildQueries.ts";
 import { type PlacedChild, tallyChildren } from "./DelegatedChildTally.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
 const TICK = Duration.seconds(1);
+const LIGHT = "light";
 
-interface ChildRow {
-  readonly run_id: string;
-  readonly thread_id: string;
-  readonly status: string;
-  readonly held: number | null;
-  readonly worktree: number;
-  readonly root_project_id: string | null;
-  readonly provider: string | null;
-  readonly parent: string | null;
-  readonly requested_at: string;
-  readonly started_at: string | null;
-}
-
-interface ActiveChild extends ChildOrigin {
-  readonly child_thread_id: string;
-  readonly root_project_id: string | null;
-}
+const lightFor = (limits: Limits, parent: string) => marksClass(limits, LIGHT, parent);
 
 type HeldRun = Pick<OrchestrationV2Run, "id" | "status" | "childStartHeld">;
 
 type AdmitOwner = ({ readonly parentThreadId: ThreadId } | { readonly projectId: ProjectId }) & {
   readonly provider?: string;
+  readonly light?: boolean;
 };
 
 export class DelegatedChildStartGate extends Context.Service<
@@ -76,10 +64,11 @@ export class DelegatedChildStartGate extends Context.Service<
   {
     readonly admit: <A, E, R>(
       owner: AdmitOwner,
-      dispatch: (held: boolean) => Effect.Effect<A, E, R>,
+      dispatch: (held: boolean, light: boolean) => Effect.Effect<A, E, R>,
       refuse?: (reason: string) => E,
     ) => Effect.Effect<A, E, R>;
     readonly isHeld: (run: HeldRun) => boolean;
+    readonly marksLight: (parentThreadId: ThreadId) => Effect.Effect<boolean>;
     readonly claim: (owner: AdmitOwner) => Effect.Effect<ClaimResult>;
     readonly unclaim: (token: number) => Effect.Effect<void>;
     readonly room: Effect.Effect<AgentPlacementRoom>;
@@ -170,47 +159,7 @@ const make = Effect.gen(function* () {
       WHERE t.thread_id = ${threadId}
     `.pipe(Effect.map((rows) => rows[0]?.project_id ?? null));
 
-  const readChildren = (remote: boolean) => sql<ChildRow>`
-    SELECT
-      r.run_id,
-      r.thread_id,
-      r.status,
-      json_extract(r.payload_json, '$.childStartHeld') AS held,
-      json_extract(r.payload_json, '$.workspacePreparation') IS NOT NULL AS worktree,
-      root.project_id AS root_project_id,
-      json_extract(t.payload_json, '$.providerInstanceId') AS provider,
-      json_extract(t.payload_json, '$.lineage.parentThreadId') AS parent,
-      r.requested_at,
-      json_extract(r.payload_json, '$.startedAt') AS started_at
-    FROM orchestration_v2_projection_runs r
-    JOIN orchestration_v2_projection_threads t ON t.thread_id = r.thread_id
-    LEFT JOIN orchestration_v2_projection_threads root
-      ON root.thread_id = COALESCE(json_extract(t.payload_json, '$.lineage.rootThreadId'), t.thread_id)
-    WHERE r.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
-      AND r.status <> 'queued'
-      AND t.deleted_at IS NULL
-      AND (json_extract(t.payload_json, '$.lineage.relationshipToParent') = 'subagent'
-        OR (${remote ? 1 : 0} = 1 AND json_extract(t.payload_json, '$.delegatedFrom') IS NOT NULL))
-      AND COALESCE(json_extract(t.payload_json, '$.creationSource'), '') <> 'provider'
-    ORDER BY r.requested_at, r.run_id
-  `;
-
-  const readActiveChildren = sql<ActiveChild>`
-    SELECT s.child_thread_id, root.project_id AS root_project_id,
-      json_extract(t.payload_json, '$.providerInstanceId') AS provider,
-      json_extract(t.payload_json, '$.lineage.parentThreadId') AS parent,
-      NULL AS started_at
-    FROM orchestration_v2_projection_nodes n
-      INDEXED BY orchestration_v2_projection_nodes_live_idx
-    JOIN orchestration_v2_projection_subagents s ON s.subagent_id = n.node_id
-    JOIN orchestration_v2_projection_threads t ON t.thread_id = s.child_thread_id
-    LEFT JOIN orchestration_v2_projection_threads root
-      ON root.thread_id = COALESCE(json_extract(t.payload_json, '$.lineage.rootThreadId'), t.thread_id)
-    WHERE n.status IN ('pending', 'starting', 'running', 'waiting')
-      AND n.kind = 'subagent'
-      AND s.origin = 'app_owned'
-      AND t.deleted_at IS NULL
-  `;
+  const { readChildren, readActiveChildren } = childQueries(sql);
 
   const heldRow = (row: ChildRow) =>
     row.status === "preparing" && row.held === 1 && !released.has(row.run_id);
@@ -347,9 +296,11 @@ const make = Effect.gen(function* () {
     const rootProject = remote
       ? owner.projectId
       : yield* rootProjectOf(owner.parentThreadId).pipe(Effect.orElseSucceed(() => null));
+    const light = !remote && owner.light === true && lightFor(limits, owner.parentThreadId);
     const groups = limitedGroups(limits, yield* homeOf(rootProject), {
       provider: owner.provider,
       parent: remote ? null : owner.parentThreadId,
+      class: light ? LIGHT : undefined,
     });
     if (groups.length === 0 && !config.byRoom) return undefined;
     const rows = yield* readChildren(config.byRoom).pipe(Effect.orElseSucceed(() => []));
@@ -363,7 +314,7 @@ const make = Effect.gen(function* () {
       groups.some(
         (group) => (queued.get(group) ?? 0) > 0 || !allows(limits, group, counted, started, now),
       );
-    return { groups, held, breach, now };
+    return { groups, held, breach, now, light };
   });
 
   const admit: DelegatedChildStartGate["Service"]["admit"] = (owner, dispatch, refuse) =>
@@ -378,11 +329,11 @@ const make = Effect.gen(function* () {
           own,
         );
         if (own !== undefined) claims.take(own);
-        if (decision === undefined) return yield* dispatch(false);
-        const { groups, held, breach, now } = decision;
+        if (decision === undefined) return yield* dispatch(false, false);
+        const { groups, held, breach, now, light } = decision;
         if (held && refuse !== undefined)
           return yield* Effect.fail(refuse(breach ?? `No free builder slot on ${yield* label}.`));
-        const result = yield* dispatch(held);
+        const result = yield* dispatch(held, light);
         if (held) pending = true;
         else for (const group of groups) lastStart.set(group, now);
         yield* Effect.logInfo("orchestration-v2.child-start.admit", {
@@ -390,6 +341,7 @@ const make = Effect.gen(function* () {
           groups,
           held,
           breach,
+          class: light ? LIGHT : null,
         });
         return result;
       }),
@@ -412,6 +364,9 @@ const make = Effect.gen(function* () {
     Effect.sync(() => {
       claims.take(token);
     });
+
+  const marksLight: DelegatedChildStartGate["Service"]["marksLight"] = (parentThreadId) =>
+    Effect.map(readConfig, (config) => lightFor(config.limits, parentThreadId));
 
   const tick = lock
     .withPermit(
@@ -478,7 +433,16 @@ const make = Effect.gen(function* () {
 
   yield* forkParked(Effect.forever(Effect.sleep(TICK).pipe(Effect.andThen(tick))));
 
-  return DelegatedChildStartGate.of({ admit, claim, unclaim, isHeld, room, hold, expired });
+  return DelegatedChildStartGate.of({
+    admit,
+    claim,
+    unclaim,
+    isHeld,
+    marksLight,
+    room,
+    hold,
+    expired,
+  });
 });
 
 export const layer = Layer.effect(DelegatedChildStartGate, make);

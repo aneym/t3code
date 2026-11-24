@@ -22,6 +22,10 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { MessageSender } from "./messageSender.ts";
 import {
+  OrchestrationV2RestartCancelledBackgroundWork,
+  OrchestrationV2RunBackgroundWorkCancelled,
+} from "./orchestrationV2RestartBackgroundWork.ts";
+import {
   OrchestrationV2DelegatedChildFields,
   OrchestrationV2DelegatedFrom,
   OrchestrationV2TaskCancel,
@@ -655,24 +659,6 @@ export const OrchestrationV2DelegatedCompletionTaskDelivery = Schema.Struct({
 export type OrchestrationV2DelegatedCompletionTaskDelivery =
   typeof OrchestrationV2DelegatedCompletionTaskDelivery.Type;
 
-export const OrchestrationV2RestartCancelledBackgroundWork = Schema.Struct({
-  kind: Schema.Literals(["subagent", "shell", "monitor", "task"]),
-  label: TrimmedNonEmptyString,
-  id: Schema.optional(TrimmedNonEmptyString),
-  /** The agent waited on this work, so its restart note wakes the agent. */
-  awaited: Schema.optional(Schema.Literal(true)),
-  rearm: Schema.optional(TrimmedNonEmptyString),
-});
-export type OrchestrationV2RestartCancelledBackgroundWork =
-  typeof OrchestrationV2RestartCancelledBackgroundWork.Type;
-
-export const OrchestrationV2RunBackgroundWorkCancelled = Schema.Struct({
-  runId: RunId,
-  restartCancelledBackgroundWork: Schema.Array(OrchestrationV2RestartCancelledBackgroundWork),
-});
-export type OrchestrationV2RunBackgroundWorkCancelled =
-  typeof OrchestrationV2RunBackgroundWorkCancelled.Type;
-
 export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("root"),
@@ -720,6 +706,7 @@ export const OrchestrationV2Run = Schema.Struct({
   usageLimitContinuationOfRunId: Schema.optional(RunId),
   delegatedTaskId: Schema.optional(NodeId),
   childStartHeld: Schema.optional(Schema.Boolean),
+  childLight: Schema.optional(Schema.Boolean),
   workStartedAt: Schema.optional(Schema.DateTimeUtc),
   restartCancelledBackgroundWork: Schema.optional(
     Schema.Array(OrchestrationV2RestartCancelledBackgroundWork),
@@ -3419,6 +3406,7 @@ export const OrchestrationV2Command = Schema.Union([
     completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
     ...AwaitedFields,
     startHeld: Schema.optional(Schema.Boolean),
+    light: Schema.optional(Schema.Boolean),
     createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({

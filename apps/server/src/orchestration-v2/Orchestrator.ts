@@ -1,3 +1,4 @@
+import { continuedChildLight, wakeWorkStartedAt } from "./RunCarryOver.ts";
 import { delegatedChildWorkspace } from "./DelegatedChildWorkspace.ts";
 import { messageDispatchWindow, runWindow } from "./CommandRunWindow.ts";
 import {
@@ -105,7 +106,6 @@ import {
   type OrchestrationV2TurnItem,
   latestProviderTurnForAttempt,
   parseGoalCommand,
-  orchestrationV2RunWorkStartedAt,
   ProviderInstanceId,
   ProviderInteractionMode,
   isRuntimeModeAbove,
@@ -447,49 +447,6 @@ export class OrchestratorV2 extends Context.Service<OrchestratorV2, Orchestrator
 /** Run ordinals can skip values: a queued run moves past newer runs when it starts. */
 function nextRunOrdinal(projection: Pick<OrchestrationV2ThreadProjection, "runs">): number {
   return projection.runs.reduce((max, run) => Math.max(max, run.ordinal), 0) + 1;
-}
-
-/**
- * Stamp at wake start; queued prompts lack start times and delegated results jump the queue.
- * Auto-drained agent messages continue active work; explicit queue starts reset it.
- */
-function wakeWorkStartedAt(
-  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "subagents">,
-  trigger: Pick<
-    OrchestrationV2ConversationMessage,
-    "createdBy" | "creationSource" | "senderThreadId"
-  > & {
-    readonly notification?: unknown;
-    readonly delegatedCompletion?: unknown;
-    readonly restartContinuationOfRunId?: RunId | undefined;
-  },
-  delivery: "immediate" | "automatic-queue" | "explicit-queue" = "immediate",
-): Pick<OrchestrationV2Run, "workStartedAt"> {
-  if (
-    trigger.notification === undefined &&
-    trigger.delegatedCompletion === undefined &&
-    trigger.restartContinuationOfRunId === undefined &&
-    !(
-      trigger.createdBy === "agent" &&
-      trigger.creationSource === "mcp" &&
-      trigger.senderThreadId !== undefined &&
-      (delivery === "automatic-queue" ||
-        (delivery === "immediate" &&
-          projection.subagents.some(
-            (subagent) =>
-              subagent.origin === "app_owned" && subagent.childThreadId === trigger.senderThreadId,
-          )))
-    )
-  ) {
-    return {};
-  }
-  const previous = projection.runs
-    .flatMap((run) => (run.startedAt === null ? [] : [{ run, startedAt: run.startedAt }]))
-    .toSorted(
-      (left, right) =>
-        DateTime.Order(right.startedAt, left.startedAt) || right.run.ordinal - left.run.ordinal,
-    )[0]?.run;
-  return previous === undefined ? {} : { workStartedAt: orchestrationV2RunWorkStartedAt(previous) };
 }
 
 const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
@@ -7063,6 +7020,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.usageLimitContinuationOfRunId === undefined
           ? {}
           : { usageLimitContinuationOfRunId: command.usageLimitContinuationOfRunId }),
+        ...continuedChildLight(projection.runs, command),
         ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
         ...(freshContext ? { freshContext: true } : {}),
       };
@@ -7473,6 +7431,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.usageLimitContinuationOfRunId === undefined
           ? {}
           : { usageLimitContinuationOfRunId: command.usageLimitContinuationOfRunId }),
+        ...continuedChildLight(projection.runs, command),
         ...(dispatchMode.type === "defer_start" && dispatchMode.workspaceStrategy !== undefined
           ? { workspacePreparation: dispatchMode.workspaceStrategy }
           : {}),
@@ -8265,6 +8224,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...(command.usageLimitContinuationOfRunId === undefined
         ? {}
         : { usageLimitContinuationOfRunId: command.usageLimitContinuationOfRunId }),
+      ...continuedChildLight(projection.runs, command),
       ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
       ...wakeWorkStartedAt(projection, command),
     };
@@ -8963,7 +8923,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Delegated child thread ${childThreadId} did not create a run.`,
         });
       }
-      if (command.startHeld === true) {
+      if (command.startHeld === true || command.light === true) {
         yield* emitEvent({
           type: "run.updated",
           threadId: childThreadId,
@@ -8971,7 +8931,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(childRun.rootNodeId === null ? {} : { nodeId: childRun.rootNodeId }),
           providerInstanceId: childRun.providerInstanceId,
           occurredAt: now,
-          payload: { ...childRun, childStartHeld: true },
+          payload: {
+            ...childRun,
+            ...(command.startHeld === true ? { childStartHeld: true } : {}),
+            ...(command.light === true ? { childLight: true } : {}),
+          },
         });
       }
       const spawnTransferId = yield* mapDispatchError(command)(
