@@ -15,9 +15,7 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
-import * as Scheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
-import * as Semaphore from "effect/Semaphore";
 import * as Context from "effect/Context";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
@@ -27,7 +25,13 @@ import type { Borrower, Connection } from "effect/sql/SqlConnection";
 import { SqlError, classifySqliteError } from "effect/sql/SqlError";
 import * as Statement from "effect/sql/Statement";
 
-import { pickReader, ReadLaneRef, RESERVED_READERS } from "./nodeSqliteLanes.ts";
+import {
+  makeReaderSlots,
+  type ReadLane,
+  ReadLaneRef,
+  RESERVED_READERS,
+} from "./nodeSqliteLanes.ts";
+import { makeSlotQueue } from "./nodeSqliteSlotQueue.ts";
 import {
   connectionOwner,
   type ConnectionOwner,
@@ -716,7 +720,6 @@ const make = Effect.fn("makeWithDatabase")(function* (
     });
   });
 
-  const semaphore = yield* Semaphore.make(1);
   const writerWorker = options.writerWorker === true && isFileDatabase;
   let checkpointAfterWrite: (() => void) | undefined;
   const writerConnection: Effect.Effect<Connection, SqlError> = writerWorker
@@ -743,154 +746,132 @@ const make = Effect.fn("makeWithDatabase")(function* (
   const readerPool = { unavailable: false };
   const readers =
     options.readerWorker && isFileDatabase
-      ? yield* Effect.forEach(Array.from({ length: READER_POOL_SIZE + RESERVED_READERS }), () =>
-          Effect.map(
-            Effect.all([makeReader(options.filename, readerPool), Semaphore.make(1)]),
-            ([acquire, lock]) => ({
-              acquire,
-              lock,
-              claims: 0,
-            }),
+      ? makeReaderSlots(
+          yield* Effect.forEach(Array.from({ length: READER_POOL_SIZE + RESERVED_READERS }), () =>
+            makeReader(options.filename, readerPool),
           ),
         )
-      : [];
+      : undefined;
+  const writerLock = makeSlotQueue(["writer"], () => true);
 
-  interface Target {
-    readonly name: Acquired["connection"];
-    readonly lock: Semaphore.Semaphore;
-    readonly connection: Connection;
-  }
-  const writer = Effect.map(writerConnection, (connection): Target => ({
-    name: "writer",
-    lock: semaphore,
-    connection,
-  }));
   let activeWriter: ConnectionOwner | undefined;
-  // Callers must run route uninterruptibly and pass `claimed` a finalizer that runs `release` once.
-  const route = (claimed: (release: Effect.Effect<void>) => Effect.Effect<void>) =>
-    Effect.withFiber((fiber): Effect.Effect<Target, SqlError> => {
-      if (readers.length === 0 || readerPool.unavailable || !Context.get(fiber.context, ReadOnly)) {
-        return writer;
-      }
-      // Least claimed wins and ties go to the lowest slot, so idle slots never start a worker.
-      const slot = pickReader(readers, Context.get(fiber.context, ReadLaneRef));
-      slot.claims++;
-      const reader = slot;
-      return Effect.andThen(
-        claimed(
-          Effect.sync(() => {
-            reader.claims--;
-          }),
-        ),
-        Effect.flatMap(reader.acquire, (readerConnection) =>
-          readerConnection === undefined
-            ? writer
-            : Effect.succeed<Target>({
-                name: "reader",
-                lock: reader.lock,
-                connection: readerConnection,
-              }),
-        ),
-      );
-    });
-
-  const acquired = (
-    target: { readonly name: Acquired["connection"] },
+  interface Lease extends Acquired {
+    readonly lane: ReadLane | undefined;
+    readonly handle: Connection;
+    readonly release: Effect.Effect<void>;
+  }
+  const waitedMs = (clock: Clock.Clock, start: bigint) =>
+    Number((clock.monotonicTimeNanosUnsafe() - start) / 1000n) / 1000;
+  const writerLease = (
+    restoreWait: typeof Effect.interruptible,
     clock: Clock.Clock,
     start: bigint,
-  ): Acquired => ({
-    connection: target.name,
-    lockWaitMs: Number((clock.monotonicTimeNanosUnsafe() - start) / 1000n) / 1000,
-  });
-
-  const borrower: Borrower = (use) =>
-    Effect.uninterruptibleMask((restore) => {
-      let release: Effect.Effect<void> = Effect.void;
-      const claimed = (next: Effect.Effect<void>) =>
-        Effect.sync(() => {
-          release = next;
-        });
-      return Effect.flatMap(route(claimed), (target) => restore(borrowTarget(target, use))).pipe(
-        Effect.ensuring(Effect.suspend(() => release)),
-      );
-    });
-  const borrowTarget = <A, E, R>(
-    target: Target,
-    use: (connection: Connection) => Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, E, R> =>
-    Effect.withFiber((fiber) => {
+  ) =>
+    Effect.flatMap(writerConnection, (handle) =>
+      Effect.map(writerLock.take(undefined, restoreWait), (held): Lease => ({
+        connection: "writer",
+        lane: undefined,
+        handle,
+        release: writerLock.release(held),
+        lockWaitMs: waitedMs(clock, start),
+      })),
+    );
+  const lease = (restoreWait: typeof Effect.interruptible) =>
+    Effect.withFiber((fiber): Effect.Effect<Lease, SqlError> => {
       const clock = fiber.getRef(Clock.Clock);
       const start = clock.monotonicTimeNanosUnsafe();
-      const ownerAtWaitStart = target.name === "writer" ? activeWriter : undefined;
-      const owner = target.name === "writer" ? connectionOwner(fiber) : undefined;
-      const useConnection = Effect.suspend(() => {
-        if (target.name === "writer") activeWriter = owner;
-        const got = acquired(target, clock, start);
-        noteWait(fiber, target.name, got.lockWaitMs);
-        if (
-          fiber.getRef(References.TracerEnabled) &&
-          fiber.getRef(Statement.SpanPropagationEnabled)
-        ) {
-          annotateAcquired(fiber, got, ownerAtWaitStart);
-        }
-        const hold = newHold();
-        const held = performance.now();
-        return use(target.connection).pipe(
-          Effect.provideService(HoldRef, hold),
-          Effect.ensuring(
-            Effect.sync(() => noteHold(fiber, target.name, performance.now() - held, hold)),
+      if (
+        readers === undefined ||
+        readerPool.unavailable ||
+        !Context.get(fiber.context, ReadOnly)
+      ) {
+        return writerLease(restoreWait, clock, start);
+      }
+      const lane = Context.get(fiber.context, ReadLaneRef);
+      return Effect.flatMap(readers.take(lane, restoreWait), (held) => {
+        const lockWaitMs = waitedMs(clock, start);
+        const release = readers.release(held);
+        return held.slot.reader.pipe(
+          Effect.onError(() => release),
+          Effect.flatMap((handle) =>
+            handle === undefined
+              ? Effect.andThen(release, writerLease(restoreWait, clock, start))
+              : Effect.succeed<Lease>({ connection: "reader", lane, handle, release, lockWaitMs }),
           ),
         );
       });
-      const useOwnedConnection =
-        target.name === "writer"
-          ? Effect.onExit(useConnection, () =>
-              Effect.sync(() => {
-                if (activeWriter === owner) activeWriter = undefined;
-              }),
-            )
-          : useConnection;
-      return target.lock.withPermits(1)(useOwnedConnection);
     });
-  const claimedUntilScopeCloses = (release: Effect.Effect<void>) =>
-    Effect.withFiber((fiber) =>
-      Scope.addFinalizer(Context.getUnsafe(fiber.context, Scope.Scope), release),
-    );
-  const transactionAcquirer = Effect.uninterruptible(route(claimedUntilScopeCloses)).pipe(
-    Effect.flatMap((target) =>
-      Effect.uninterruptibleMask((restore) => {
-        const fiber = Fiber.getCurrent()!;
-        const scope = Context.getUnsafe(fiber.context, Scope.Scope);
-        const clock = fiber.getRef(Clock.Clock);
-        const start = clock.monotonicTimeNanosUnsafe();
-        const pending = fiber.getRef(TransactionAcquire);
-        const ownerAtWaitStart = target.name === "writer" ? activeWriter : undefined;
-        const owner = target.name === "writer" ? connectionOwner(fiber) : undefined;
-        const acquire = Effect.tap((pending?.restore ?? restore)(target.lock.take(1)), () => {
-          if (target.name === "writer") activeWriter = owner;
-          const got = acquired(target, clock, start);
-          noteWait(fiber, target.name, got.lockWaitMs);
-          if (pending !== undefined) {
-            pending.acquired = got;
-            pending.ownerAtWaitStart = ownerAtWaitStart;
-          }
-          const hold = fiber.getRef(HoldRef);
-          const held = performance.now();
-          return Scope.addFinalizer(
-            scope,
-            Effect.sync(() => {
-              if (target.name === "writer" && activeWriter === owner) activeWriter = undefined;
-              if (hold !== undefined) noteHold(fiber, target.name, performance.now() - held, hold);
-            }).pipe(Effect.andThen(target.lock.release(1))),
+  const noteLease = (fiber: Fiber.Fiber<unknown, unknown>, leased: Lease) => {
+    const owner = leased.connection === "writer" ? connectionOwner(fiber) : undefined;
+    if (owner !== undefined) activeWriter = owner;
+    noteWait(fiber, leased.connection, leased.lockWaitMs, leased.lane);
+    return owner;
+  };
+  const leaveWriter = (owner: ConnectionOwner | undefined) => {
+    if (owner !== undefined && activeWriter === owner) activeWriter = undefined;
+  };
+
+  const borrower: Borrower = (use) =>
+    Effect.uninterruptibleMask((restore) =>
+      Effect.withFiber((fiber) => {
+        const ownerAtWaitStart = activeWriter;
+        return Effect.flatMap(lease(restore), (leased) => {
+          const hold = newHold();
+          let owner: ConnectionOwner | undefined;
+          let held: number | undefined;
+          return Effect.suspend(() => {
+            owner = noteLease(fiber, leased);
+            if (
+              fiber.getRef(References.TracerEnabled) &&
+              fiber.getRef(Statement.SpanPropagationEnabled)
+            ) {
+              annotateAcquired(fiber, leased, owner === undefined ? undefined : ownerAtWaitStart);
+            }
+            held = performance.now();
+            return restore(use(leased.handle).pipe(Effect.provideService(HoldRef, hold)));
+          }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                leaveWriter(owner);
+                if (held !== undefined)
+                  noteHold(fiber, leased.connection, performance.now() - held, hold);
+              }),
+            ),
+            Effect.ensuring(leased.release),
           );
         });
-        return Effect.as(
-          // A scheduler yield after taking the permit must not precede its release finalizer.
-          Effect.provideService(acquire, Scheduler.PreventSchedulerYield, true),
-          target.connection,
-        );
       }),
-    ),
+    );
+  const transactionAcquirer = Effect.uninterruptibleMask((restore) =>
+    Effect.withFiber((fiber) => {
+      const scope = Context.getUnsafe(fiber.context, Scope.Scope);
+      const pending = fiber.getRef(TransactionAcquire);
+      const ownerAtWaitStart = activeWriter;
+      return Effect.flatMap(lease(pending?.restore ?? restore), (leased) => {
+        const hold = fiber.getRef(HoldRef);
+        let owner: ConnectionOwner | undefined;
+        let held: number | undefined;
+        return Effect.andThen(
+          Scope.addFinalizer(
+            scope,
+            Effect.sync(() => {
+              leaveWriter(owner);
+              if (hold !== undefined && held !== undefined)
+                noteHold(fiber, leased.connection, performance.now() - held, hold);
+            }).pipe(Effect.ensuring(leased.release)),
+          ),
+          Effect.sync(() => {
+            owner = noteLease(fiber, leased);
+            if (pending !== undefined) {
+              pending.acquired = leased;
+              pending.ownerAtWaitStart = owner === undefined ? undefined : ownerAtWaitStart;
+            }
+            held = performance.now();
+            return leased.handle;
+          }),
+        );
+      });
+    }),
   );
 
   const client = yield* Client.make({

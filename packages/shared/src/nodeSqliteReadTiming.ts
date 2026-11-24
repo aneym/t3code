@@ -102,11 +102,22 @@ export const noteStatement = (
   }
 };
 
-export const noteWait = (fiber: Fiber.Fiber<unknown, unknown>, conn: string, ms: number) => {
+export const noteWait = (
+  fiber: Fiber.Fiber<unknown, unknown>,
+  conn: string,
+  ms: number,
+  lane: string | undefined,
+) => {
   const tally = fiber.getRef(ReadTallyRef);
   if (tally !== undefined) tally.waitMs += ms;
   if (sink !== undefined && ms >= SLOW_READ_MS) {
-    sink({ k: "db.wait", conn, owner: connectionOwner(fiber).name, ms: round(ms) });
+    sink({
+      k: "db.wait",
+      conn,
+      ...(lane === undefined ? {} : { lane }),
+      owner: connectionOwner(fiber).name,
+      ms: round(ms),
+    });
   }
 };
 

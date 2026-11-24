@@ -1,5 +1,6 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import { makeSlotQueue } from "./nodeSqliteSlotQueue.ts";
 
 export type ReadLane = "pool" | "priority" | "interactive";
 
@@ -15,14 +16,22 @@ export const prioritized = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Eff
 export const interactive = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
   Effect.provideService(effect, ReadLaneRef, "interactive");
 
-export const pickReader = <Slot extends { readonly claims: number }>(
-  readers: ReadonlyArray<Slot>,
-  lane: ReadLane,
-): Slot => {
+export interface ReaderSlot<A> {
+  readonly lane: ReadLane;
+  readonly reader: A;
+}
+
+const serves = (slot: ReaderSlot<unknown>, lane: ReadLane) =>
+  slot.lane === lane || (slot.lane === "pool" && lane === "interactive");
+
+export const makeReaderSlots = <A>(readers: ReadonlyArray<A>) => {
   const pool = readers.length - RESERVED_READERS;
-  if (lane === "priority") return readers[pool + 1]!;
-  let slot = readers[lane === "interactive" ? pool : 0]!;
-  for (let index = 0; index < pool; index++)
-    if (readers[index]!.claims < slot.claims) slot = readers[index]!;
-  return slot;
+  return makeSlotQueue<ReaderSlot<A>, ReadLane>(
+    [
+      { lane: "interactive", reader: readers[pool]! },
+      ...readers.slice(0, pool).map((reader) => ({ lane: "pool" as const, reader })),
+      { lane: "priority", reader: readers[pool + 1]! },
+    ],
+    serves,
+  );
 };
