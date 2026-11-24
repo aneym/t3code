@@ -1,4 +1,5 @@
 import type { OrchestrationProjectShell, ThreadId } from "@t3tools/contracts";
+import * as NodeSqliteLanes from "@t3tools/shared/nodeSqliteLanes";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import type * as SqlClient from "effect/sql/SqlClient";
@@ -49,7 +50,7 @@ export const loadActiveSubscriberShell = Effect.fn("ActiveSubscriberShell.load")
     listProjects: input.listProjects,
     latestSequence: input.latestSequence,
     options: input.options,
-  });
+  }).pipe(NodeSqliteLanes.interactive);
   for (const id of loaded.subagentThreadIds) subagentIds.add(id);
   return { snapshot: loaded.snapshot, subagentThreadIds: subagentIds };
 });

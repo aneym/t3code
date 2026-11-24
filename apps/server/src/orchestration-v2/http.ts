@@ -3,6 +3,7 @@ import {
   EnvironmentHttpApi,
   type OrchestrationProjectShell,
 } from "@t3tools/contracts";
+import * as NodeSqliteLanes from "@t3tools/shared/nodeSqliteLanes";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Predicate from "effect/Predicate";
@@ -108,7 +109,7 @@ export const layer = HttpApiBuilder.group(
           omitIdleSubagents: query.omitIdleSubagents === "1",
           omitOlderSettled: query.omitOlderSettled === "1",
         }),
-      });
+      }).pipe(NodeSqliteLanes.interactive);
     });
 
     const loadThreadSnapshot = Effect.fn("http.orchestration.loadThreadSnapshot")(function* (
