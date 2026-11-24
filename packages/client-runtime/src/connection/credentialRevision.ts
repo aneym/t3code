@@ -17,12 +17,17 @@ export function credentialRevision(token: string): string {
   return [1, 2, 3, 4].map((seed) => hash32(token, seed).toString(16).padStart(8, "0")).join("");
 }
 
+const refusesCredential = (failure: ConnectionAttemptError): boolean =>
+  failure._tag === "ConnectionBlockedError" &&
+  failure.hop === "server" &&
+  (failure.reason === "permission" || failure.reason === "authentication");
+
 export const withCredentialRevision = (
   failure: ConnectionAttemptError,
   token: string,
 ): ConnectionAttemptError =>
   failure._tag === "ConnectionBlockedError" &&
-  failure.failureCause === "chat_session_forbidden" &&
+  refusesCredential(failure) &&
   failure.credentialRevision === undefined
     ? new ConnectionBlockedError({ ...failure, credentialRevision: credentialRevision(token) })
     : failure;

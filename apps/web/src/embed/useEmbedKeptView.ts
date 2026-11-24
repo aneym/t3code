@@ -105,15 +105,17 @@ const ACCESS_RETRY_MS = 2000;
 const keptViewAccessAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get): KeptViewAccess | null => {
     let live = true;
+    let latest = 0;
     let retry: ReturnType<typeof setTimeout> | undefined;
     const read = (): void => {
       clearTimeout(retry);
+      const sequence = ++latest;
       void loadKeptViewAccess(environmentId).then(
         (access) => {
-          if (live) get.setSelf(access);
+          if (live && sequence === latest) get.setSelf(access);
         },
         () => {
-          if (!live) return;
+          if (!live || sequence !== latest) return;
           get.setSelf(null);
           retry = setTimeout(read, ACCESS_RETRY_MS);
         },
@@ -121,6 +123,10 @@ const keptViewAccessAtom = Atom.family((environmentId: EnvironmentId) =>
     };
     const stop = onKeptViewAccessChange((changed) => {
       if (changed !== environmentId) return;
+      latest += 1;
+      if (get.registry.get(keptEnvironmentsAtom(environmentId)).saved) {
+        get.registry.set(environmentThreads.suspendedAtom(environmentId), true);
+      }
       get.setSelf(null);
       read();
     });
@@ -171,11 +177,17 @@ export function useEmbedSavedEnvironmentIds(): ReadonlyArray<EnvironmentId> {
 }
 
 export function useEmbedSavedEnvironmentGuard(environmentId: EnvironmentId): void {
-  const access = useAtomValue(savedAccessAtom(environmentId));
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- stops every thread subscription and drops every in-memory snapshot of a saved environment while its access is unread, refused or bound to another pairing, so it reopens only from fresh state
-  useEffect(() => {
-    appAtomRegistry.set(environmentThreads.suspendedAtom(environmentId), access !== "open");
-  }, [access, environmentId]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps thread subscriptions of a saved environment stopped while its access is unread, refused or bound to another pairing, and reopens them after each fresh read; the marker event itself suspends them first
+  useEffect(
+    () =>
+      appAtomRegistry.subscribe(
+        savedAccessAtom(environmentId),
+        (access) =>
+          appAtomRegistry.set(environmentThreads.suspendedAtom(environmentId), access !== "open"),
+        { immediate: true },
+      ),
+    [environmentId],
+  );
 }
 
 export function useEmbedKeptViewUpkeep(

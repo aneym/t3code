@@ -103,6 +103,11 @@ interface TracedAttemptFailure {
   readonly attemptSpan: Option.Option<Tracer.Span>;
 }
 
+interface AttemptTrail {
+  readonly refused: Ref.Ref<ReadonlyArray<ConnectionAttemptError>>;
+  readonly route: Ref.Ref<ConnectionRoute | undefined>;
+}
+
 type AttemptOutcome =
   | {
       readonly _tag: "Interrupted";
@@ -454,16 +459,18 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     generation: number,
     lastFailure: ConnectionAttemptError | null,
     synchronizedRoutes: Ref.Ref<number>,
-    refusal: Ref.Ref<Option.Option<ConnectionAttemptError>>,
+    trail: AttemptTrail,
   ) {
     return yield* driver.connect(
       yield* attemptEntry,
       (progress) =>
         (progress.stage === "synchronizing"
           ? Ref.update(synchronizedRoutes, (count) => count + 1)
-          : Effect.void
+          : progress.stage === "preparing" && progress.route !== undefined
+            ? Ref.set(trail.route, progress.route)
+            : Effect.void
         ).pipe(Effect.andThen(reportProgress(attempt, generation, lastFailure, progress))),
-      (failure) => Ref.set(refusal, Option.some(failure)),
+      (failure) => Ref.update(trail.refused, (refused) => [...refused, failure]),
     );
   });
 
@@ -545,11 +552,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     lastFailure: ConnectionAttemptError | null,
     pendingRetry: Option.Option<PendingRetryTrace>,
     synchronizedRoutes: Ref.Ref<number>,
-    refusal: Ref.Ref<Option.Option<ConnectionAttemptError>>,
+    trail: AttemptTrail,
   ) {
     if (usesRelay) {
       return yield* traceRelayEstablishment(
-        establishConnection(attempt, generation, lastFailure, synchronizedRoutes, refusal),
+        establishConnection(attempt, generation, lastFailure, synchronizedRoutes, trail),
         attempt,
         generation,
         pendingRetry,
@@ -560,7 +567,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       generation,
       lastFailure,
       synchronizedRoutes,
-      refusal,
+      trail,
     ).pipe(
       Effect.map((lease) => ({
         attemptSpan: Option.none<Tracer.Span>(),
@@ -898,7 +905,21 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     const switchingTo = yield* Ref.get(preferredRouteId);
     yield* SubscriptionRef.set(prepared, Option.none());
     const synchronizedRoutes = yield* Ref.make(0);
-    const refusal = yield* Ref.make(Option.none<ConnectionAttemptError>());
+    const trail: AttemptTrail = {
+      refused: yield* Ref.make<ReadonlyArray<ConnectionAttemptError>>([]),
+      route: yield* Ref.make<ConnectionRoute | undefined>(undefined),
+    };
+    const recordRefusals = Effect.gen(function* () {
+      const revisions = new Set<string>();
+      for (const failure of yield* Ref.get(trail.refused)) {
+        if (failure._tag === "ConnectionBlockedError" && failure.credentialRevision !== undefined) {
+          revisions.add(failure.credentialRevision);
+        }
+      }
+      for (const revision of revisions) {
+        yield* refusals.record(target.environmentId, revision);
+      }
+    });
     const establishment = yield* Effect.raceAllFirst([
       exitUnlessInterrupted(
         establishTracedConnection(
@@ -907,7 +928,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           lastFailure,
           pendingRetry,
           synchronizedRoutes,
-          refusal,
+          trail,
         ),
       ).pipe(
         Effect.map((exit): EstablishmentEvent => ({
@@ -961,11 +982,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       } satisfies AttemptOutcome;
     }
     if (establishment._tag === "TimedOut") {
-      const refused = yield* Ref.get(refusal);
-      const lastPrepared = yield* SubscriptionRef.get(prepared);
-      const lastRoute = Option.isSome(lastPrepared)
-        ? yield* preparedRoute(lastPrepared.value)
-        : undefined;
+      yield* recordRefusals;
+      const refused = (yield* Ref.get(trail.refused)).find(
+        (failure) => failure.failureCause === "chat_session_forbidden",
+      );
+      const lastRoute = yield* Ref.get(trail.route);
       const timedOut = new ConnectionTransientError({
         reason: "timeout",
         detail: setupTimeoutDetail,
@@ -975,16 +996,17 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         established: false,
         stable: false,
         failure: {
-          error: Option.getOrElse(refused, () =>
-            lastRoute === undefined
+          error:
+            refused ??
+            (lastRoute === undefined
               ? timedOut
-              : ConnectionDriver.withRouteKind(timedOut, lastRoute),
-          ),
+              : ConnectionDriver.withRouteKind(timedOut, lastRoute)),
           attemptSpan: Option.none(),
         },
       } satisfies AttemptOutcome;
     }
     if (Exit.isFailure(establishment.exit)) {
+      yield* recordRefusals;
       const isUnexpectedDefect =
         !Cause.hasInterruptsOnly(establishment.exit.cause) &&
         !establishment.exit.cause.reasons.some(Cause.isFailReason);
@@ -1189,13 +1211,6 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       const error: ConnectionAttemptError = outcome.failure.error;
       if (!outcome.established) {
         latestFailure = error;
-        if (
-          error._tag === "ConnectionBlockedError" &&
-          error.failureCause === "chat_session_forbidden" &&
-          error.credentialRevision !== undefined
-        ) {
-          yield* refusals.record(target.environmentId, error.credentialRevision);
-        }
       }
       if (error._tag === "ConnectionBlockedError") {
         const blockedIntent = yield* Ref.get(intent);
