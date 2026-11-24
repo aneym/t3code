@@ -1,3 +1,5 @@
+import { type ConnectionAttemptError, ConnectionBlockedError } from "./model.ts";
+
 const hash32 = (text: string, seed: number): number => {
   let h1 = 0xdeadbeef ^ seed;
   let h2 = 0x41c6ce57 ^ seed;
@@ -14,3 +16,13 @@ const hash32 = (text: string, seed: number): number => {
 export function credentialRevision(token: string): string {
   return [1, 2, 3, 4].map((seed) => hash32(token, seed).toString(16).padStart(8, "0")).join("");
 }
+
+export const withCredentialRevision = (
+  failure: ConnectionAttemptError,
+  token: string,
+): ConnectionAttemptError =>
+  failure._tag === "ConnectionBlockedError" &&
+  failure.failureCause === "chat_session_forbidden" &&
+  failure.credentialRevision === undefined
+    ? new ConnectionBlockedError({ ...failure, credentialRevision: credentialRevision(token) })
+    : failure;

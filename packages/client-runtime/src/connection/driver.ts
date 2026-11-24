@@ -15,7 +15,7 @@ import type {
   ConnectionAttemptStage,
   PreparedConnection,
 } from "./model.ts";
-import { credentialRevision } from "./credentialRevision.ts";
+import { withCredentialRevision } from "./credentialRevision.ts";
 import { ConnectionBlockedError, ConnectionTransientError } from "./model.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import {
@@ -83,17 +83,12 @@ export const withRouteKind = (
     : new ConnectionBlockedError({ ...failure, routeKind });
 };
 
-const withCredentialRevision = (
+const withPreparedCredential = (
   failure: ConnectionAttemptError,
   prepared: PreparedConnection,
 ): ConnectionAttemptError =>
-  failure._tag === "ConnectionBlockedError" &&
-  failure.failureCause === "chat_session_forbidden" &&
   prepared.httpAuthorization?._tag === "Bearer"
-    ? new ConnectionBlockedError({
-        ...failure,
-        credentialRevision: credentialRevision(prepared.httpAuthorization.token),
-      })
+    ? withCredentialRevision(failure, prepared.httpAuthorization.token)
     : failure;
 
 export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")(function* <R>(
@@ -249,10 +244,10 @@ export const make = Effect.gen(function* () {
         yield* reportProgress({ stage: "opening", prepared });
         const session = yield* sessions
           .connect(prepared)
-          .pipe(Effect.mapError((failure) => withCredentialRevision(failure, prepared)));
+          .pipe(Effect.mapError((failure) => withPreparedCredential(failure, prepared)));
         yield* reportProgress({ stage: "synchronizing", prepared });
         yield* session.ready.pipe(
-          Effect.mapError((failure) => withCredentialRevision(failure, prepared)),
+          Effect.mapError((failure) => withPreparedCredential(failure, prepared)),
         );
         // The server closes a socket when its session expires, unless the same key renewed it.
         if (prepared.httpAuthorization?._tag === "Dpop") {
