@@ -1,4 +1,5 @@
 import { queueSettingsSearch } from "./queueSettingsSearch";
+import { forkChatDisplaySearch } from "./forkChatDisplaySearch";
 import { HOSTED_APP_CHANNEL } from "~/branding";
 import { isElectron, isSecretsFeatureEnabled } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
@@ -494,12 +495,7 @@ export const SETTINGS_SEARCH_ITEMS = [
       "accessibility a11y screen reader nvda jaws voiceover orca narrator speech announce read aloud messages activity steps",
     ],
   },
-  {
-    id: "hide-trailing-stage-line",
-    title: "Hide stage lines",
-    to: "/settings/chat",
-    searchTerms: ["agent status line done working review blocked scope live last line reply"],
-  },
+  ...forkChatDisplaySearch,
   {
     id: "screen-reader-window-title",
     title: "Screen reader window title",

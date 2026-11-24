@@ -74,6 +74,7 @@ import {
   formatSearchToolLabel,
 } from "@t3tools/shared/toolActivity";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
+import * as Opening from "./openingReply";
 
 export function timelineEntryRunId(entry: TimelineEntry): RunId | null {
   if (entry.kind === "message") {
@@ -913,22 +914,6 @@ function timelineEntryFoldRunId(entry: TimelineEntry, runlessKey: RunId | null):
   return null;
 }
 
-function timelineEntryIsSteer(entry: TimelineEntry): boolean {
-  return (
-    entry.kind === "message" &&
-    entry.message.role === "user" &&
-    (entry.message.inputIntent === "steer" ||
-      entry.message.inputIntent === "promoted_queued_to_steer")
-  );
-}
-
-export function timelineEntryStartsResponse(entry: TimelineEntry): boolean {
-  return (
-    (entry.kind === "message" && entry.message.role === "user" && !timelineEntryIsSteer(entry)) ||
-    (entry.kind === "work" && entry.entry.itemType === "notification")
-  );
-}
-
 function timelineEntryEnd(entry: TimelineEntry): string {
   return entry.kind === "message" ? entry.message.updatedAt : entry.createdAt;
 }
@@ -945,7 +930,7 @@ function responseBoundaryRunId(entry: TimelineEntry): RunId | null {
 
 // Group promptless restarts under the initiating prompt until settled.
 function lastResponseBoundaryIndex(timelineEntries: ReadonlyArray<TimelineEntry>): number {
-  return timelineEntries.findLastIndex(timelineEntryStartsResponse);
+  return timelineEntries.findLastIndex(Opening.timelineEntryStartsResponse);
 }
 
 function deriveActiveVisualResponseRunIds(input: {
@@ -1032,7 +1017,7 @@ function deriveTurnFolds(input: {
   const interruptedRunIds = new Set<RunId>();
   const promptIndexByRunId = new Map<RunId, number>();
   for (const [index, entry] of input.timelineEntries.entries()) {
-    if (timelineEntryStartsResponse(entry)) {
+    if (Opening.timelineEntryStartsResponse(entry)) {
       const runId = responseBoundaryRunId(entry);
       if (runId !== null && !promptIndexByRunId.has(runId)) promptIndexByRunId.set(runId, index);
     }
@@ -1067,7 +1052,7 @@ function deriveTurnFolds(input: {
   let responseKey: RunId | null = null;
   let pendingBoundary: { createdAt: string; anchorEntryId: string } | null = null;
   for (const [index, entry] of input.timelineEntries.entries()) {
-    if (timelineEntryStartsResponse(entry)) {
+    if (Opening.timelineEntryStartsResponse(entry)) {
       const nextEntry = input.timelineEntries[index + 1];
       pendingBoundary = nextEntry
         ? { createdAt: entry.createdAt, anchorEntryId: nextEntry.id }
@@ -1077,7 +1062,7 @@ function deriveTurnFolds(input: {
       responseKey = boundaryRunId ?? runlessKey;
       continue;
     }
-    if (entry.kind === "message" && timelineEntryIsSteer(entry)) {
+    if (entry.kind === "message" && Opening.timelineEntryIsSteer(entry)) {
       const steerRunId = entry.message.runId ?? responseKey;
       const group = steerRunId === null ? undefined : groupsByRunId.get(steerRunId);
       if (group !== undefined && group.entries.length > 0) {
@@ -1398,7 +1383,7 @@ function workShownAsFinalAnswerOnly(
       pendingApprovalRequestIds?.has(item.requestId) === true) ||
     work.questionAnswer !== undefined ||
     timelineEntryIsCompaction(entry) ||
-    timelineEntryStartsResponse(entry) ||
+    Opening.timelineEntryStartsResponse(entry) ||
     work.tone === "error" ||
     work.sourceActivityKind === "runtime.error" ||
     (work.itemType === "error" && work.toolLifecycleStatus !== "completed")
@@ -1414,7 +1399,7 @@ function deriveInFlightSteerAnswerIds(entries: ReadonlyArray<TimelineEntry>): Re
     const reply = entry.kind === "message" && entry.message.role === "assistant" ? entry : null;
     if (candidate !== null && reply !== null) ids.add(candidate);
     candidate = null;
-    if (timelineEntryIsSteer(entry)) {
+    if (Opening.timelineEntryIsSteer(entry)) {
       awaitingReply = true;
     } else if (entry.kind === "message" && entry.message.role === "user") {
       awaitingReply = false;
@@ -1452,6 +1437,7 @@ function timelineRowEntries(
     | "latestRun"
     | "runningRunId"
     | "pendingApprovalRequestIds"
+    | "keepOpeningReplyVisible"
   >,
 ) {
   const visibility = input.toolCallVisibility ?? "showAll";
@@ -1466,6 +1452,7 @@ function timelineRowEntries(
     const terminalIds = deriveTerminalAssistantMessageIds(entries);
     const steerAnswerIds = deriveInFlightSteerAnswerIds(entries);
     const retainedReplyIds = retainedAssistantReplyEntryIds(entries);
+    const openingIds = Opening.replyIds(entries, input.keepOpeningReplyVisible);
     shown = entries.filter((entry, index) => {
       if (entry.kind !== "message") {
         return workShownAsFinalAnswerOnly(entry, input.pendingApprovalRequestIds);
@@ -1476,6 +1463,7 @@ function timelineRowEntries(
         message.id === input.revealedMessageId ||
         steerAnswerIds.has(message.id) ||
         retainedReplyIds.has(entry.id) ||
+        openingIds.has(entry.id) ||
         (terminalIds.has(message.id) &&
           index < answeringFrom &&
           (answeringRunId === null || message.runId !== answeringRunId))
@@ -1541,6 +1529,7 @@ export function deriveMessagesTimelineRows(input: {
   worktreeSetup?: WorktreeSetupSnapshot | null;
   toolCallVisibility?: ToolCallVisibility;
   revealedMessageId?: MessageId | null;
+  keepOpeningReplyVisible?: boolean;
 }): MessagesTimelineRow[] {
   const timelineEntries = timelineRowEntries(input);
   const embeddedResultRunIds = new Set<RunId>();
@@ -1578,11 +1567,16 @@ export function deriveMessagesTimelineRows(input: {
   const itemizedRunIds = itemizedFailedRunIds(timelineEntries, failedRunIds);
   const liveSubagentEntryIds = liveSubagentCardEntryIds(timelineEntries);
   const retainedAssistantReplyIds = retainedAssistantReplyEntryIds(timelineEntries);
-  const supersededFoldsByAnchorEntryId = deriveSupersededAttemptFolds(
+  const openingIds = Opening.replyIds(input.timelineEntries, input.keepOpeningReplyVisible);
+  const supersededFoldsByAnchorEntryId = Opening.unfoldReplies(
+    deriveSupersededAttemptFolds(
+      timelineEntries,
+      failedRunIds,
+      liveSubagentEntryIds,
+      retainedAssistantReplyIds,
+    ),
+    openingIds,
     timelineEntries,
-    failedRunIds,
-    liveSubagentEntryIds,
-    retainedAssistantReplyIds,
   );
   const supersededWorkItemIds = new Set(
     [...supersededFoldsByAnchorEntryId.values()].flatMap((fold) => fold.deferredWorkItemIds),
@@ -1593,7 +1587,7 @@ export function deriveMessagesTimelineRows(input: {
     isWorking: input.isWorking,
   });
   const runlessWorkActive = input.isWorking && input.runlessWorkActive === true;
-  const foldsByAnchorEntryId =
+  const foldsByAnchorEntryId = Opening.unfoldReplies(
     input.toolCallVisibility === "zen"
       ? new Map<string, TurnFold>()
       : deriveTurnFolds({
@@ -1604,7 +1598,10 @@ export function deriveMessagesTimelineRows(input: {
           runlessWorkActive,
           liveSubagentEntryIds,
           retainedAssistantReplyEntryIds: retainedAssistantReplyIds,
-        });
+        }),
+    openingIds,
+    timelineEntries,
+  );
   const timelineEntryById = new Map(timelineEntries.map((entry) => [entry.id, entry]));
   const collapsedEntryIds = new Set<string>();
   const collapsedFoldMemberIds = new Set<string>();

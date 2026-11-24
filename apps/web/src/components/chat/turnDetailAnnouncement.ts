@@ -2,11 +2,8 @@ import type { RunId, ScreenReaderAnnouncements } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import type { TimelineEntry, WorkLogEntry } from "../../session-logic";
-import {
-  liveWorkEntryLabel,
-  timelineEntryRunId,
-  timelineEntryStartsResponse,
-} from "./MessagesTimeline.logic";
+import { liveWorkEntryLabel, timelineEntryRunId } from "./MessagesTimeline.logic";
+import { timelineEntryStartsResponse } from "./openingReply";
 import { markdownPlainText } from "./timelineMinimapItems";
 
 export interface TurnMessage {

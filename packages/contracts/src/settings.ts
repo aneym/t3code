@@ -1,6 +1,7 @@
 import * as ForkEmbed from "./forkEmbedSettings.ts";
 import * as ForkSidebarThread from "./forkSidebarThreadSettings.ts";
 import * as ForkRailsWords from "./forkRailsWordsSettings.ts";
+import * as ForkChatDisplay from "./forkChatDisplaySettings.ts";
 import { ForkThreadSettingsFields, ForkThreadSettingsPatchFields } from "./forkThreadSettings.ts";
 import {
   WorktreeCleanupRulesPatchFields,
@@ -555,7 +556,7 @@ export const ClientSettingsSchema = Schema.Struct({
   sidebarWorkingShelfEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   ...ForkSidebarThread.Client,
   ...ForkRailsWords.Client,
-  hideTrailingStageLine: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  ...ForkChatDisplay.Client,
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
   ),
@@ -2019,7 +2020,7 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarWorkingShelfEnabled: Schema.optionalKey(Schema.Boolean),
   ...ForkSidebarThread.ClientPatch,
   ...ForkRailsWords.ClientPatch,
-  hideTrailingStageLine: Schema.optionalKey(Schema.Boolean),
+  ...ForkChatDisplay.ClientPatch,
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),
