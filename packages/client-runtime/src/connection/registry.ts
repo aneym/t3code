@@ -218,6 +218,7 @@ export const make = Effect.gen(function* () {
   const registrations = yield* Persistence.ConnectionRegistrationStore;
   const cache = yield* Persistence.EnvironmentCacheStore;
   const ownedDataCleanup = yield* Persistence.EnvironmentOwnedDataCleanup;
+  const connectionRefusals = yield* ClientCapabilities.ConnectionRefusals;
   const profiles = yield* ConnectionProfileStore.ConnectionProfileStore;
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
   const pullRequestRoutingPermissions = yield* PullRequestRoutingPermissions;
@@ -378,6 +379,7 @@ export const make = Effect.gen(function* () {
             Effect.provideService(Connectivity.Connectivity, connectivity),
             Effect.provideService(ConnectionDriver.ConnectionDriver, driver),
             Effect.provideService(ConnectionWakeups.ConnectionWakeups, wakeups),
+            Effect.provideService(ClientCapabilities.ConnectionRefusals, connectionRefusals),
             Scope.provide(scope),
             Effect.onError(() => Scope.close(scope, Exit.void)),
           );
@@ -603,7 +605,7 @@ export const make = Effect.gen(function* () {
         for (const each of alongside) {
           entry = yield* mergeRegistration(entry, connectionRegistrationCatalogEntry(each));
         }
-        yield* registrations.register(registration, persistedRoutes(entry), alongside);
+        yield* registrations.register(registration, persistedRoutes(entry), alongside, since);
         yield* Ref.update(persistedEnvironmentIds, (current) =>
           new Set(current).add(environmentId),
         );
@@ -896,7 +898,7 @@ export const make = Effect.gen(function* () {
     yield* Ref.update(removedAt, (current) => new Map(current).set(environmentId, now));
 
     yield* pullRequestRoutingPermissions.forget(environmentId);
-    yield* registrations.remove(environmentId);
+    yield* registrations.remove(environmentId, now);
     yield* Ref.update(persistedEnvironmentIds, (current) => {
       const next = new Set(current);
       next.delete(environmentId);

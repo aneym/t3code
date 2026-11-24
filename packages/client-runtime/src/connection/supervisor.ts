@@ -27,6 +27,7 @@ import {
   type SupervisorConnectionState,
 } from "./model.ts";
 import * as RpcSession from "../rpc/session.ts";
+import * as ClientCapabilities from "../platform/capabilities.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
@@ -274,6 +275,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const connectivity = yield* Connectivity.Connectivity;
   const driver = yield* ConnectionDriver.ConnectionDriver;
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
+  const refusals = yield* ClientCapabilities.ConnectionRefusals;
   // The primary environment served this client or runs beside it on loopback,
   // so the device reporting offline (often wrongly) never parks it. The report
   // still probes its live session, like any other network change.
@@ -631,15 +633,18 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     return undefined;
   });
 
-  const leaseRouteKind = (lease: ConnectionDriver.EnvironmentConnectionLease) =>
+  const preparedRoute = (preparedConnection: PreparedConnection) =>
     currentRoutes.pipe(
-      Effect.map((routes) => {
-        const route = routes.find(
+      Effect.map((routes) =>
+        routes.find(
           (candidate) =>
-            connectionRouteId(candidate.target) === connectionRouteId(lease.prepared.target),
-        );
-        return route === undefined ? undefined : connectionRouteKind(route);
-      }),
+            connectionRouteId(candidate.target) === connectionRouteId(preparedConnection.target),
+        ),
+      ),
+    );
+  const leaseRouteKind = (lease: ConnectionDriver.EnvironmentConnectionLease) =>
+    preparedRoute(lease.prepared).pipe(
+      Effect.map((route) => (route === undefined ? undefined : connectionRouteKind(route))),
     );
 
   const isLongResume = (signal: SupervisorSignal) =>
@@ -957,18 +962,23 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     }
     if (establishment._tag === "TimedOut") {
       const refused = yield* Ref.get(refusal);
+      const lastPrepared = yield* SubscriptionRef.get(prepared);
+      const lastRoute = Option.isSome(lastPrepared)
+        ? yield* preparedRoute(lastPrepared.value)
+        : undefined;
+      const timedOut = new ConnectionTransientError({
+        reason: "timeout",
+        detail: setupTimeoutDetail,
+      });
       return {
         _tag: "Failure",
         established: false,
         stable: false,
         failure: {
-          error: Option.getOrElse(
-            refused,
-            () =>
-              new ConnectionTransientError({
-                reason: "timeout",
-                detail: setupTimeoutDetail,
-              }),
+          error: Option.getOrElse(refused, () =>
+            lastRoute === undefined
+              ? timedOut
+              : ConnectionDriver.withRouteKind(timedOut, lastRoute),
           ),
           attemptSpan: Option.none(),
         },
@@ -1038,19 +1048,16 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       retryAt: null,
     });
 
+    const connectedFailure = (error: ConnectionAttemptError): TracedAttemptFailure => ({
+      error:
+        connectedLease.activeRoute === undefined
+          ? error
+          : ConnectionDriver.withRouteKind(error, connectedLease.activeRoute),
+      attemptSpan: active.attemptSpan,
+    });
     const connectedExit = yield* Effect.raceFirst(
-      connectedLease.session.closed.pipe(
-        Effect.mapError((error): TracedAttemptFailure => ({
-          error,
-          attemptSpan: active.attemptSpan,
-        })),
-      ),
-      monitorConnectedLease(connectedLease).pipe(
-        Effect.mapError((error): TracedAttemptFailure => ({
-          error,
-          attemptSpan: active.attemptSpan,
-        })),
-      ),
+      connectedLease.session.closed.pipe(Effect.mapError(connectedFailure)),
+      monitorConnectedLease(connectedLease).pipe(Effect.mapError(connectedFailure)),
     ).pipe(exitUnlessInterrupted);
     const connectedForMs = (yield* Clock.currentTimeMillis) - connectedAt;
     if (Exit.isSuccess(connectedExit)) {
@@ -1182,6 +1189,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       const error: ConnectionAttemptError = outcome.failure.error;
       if (!outcome.established) {
         latestFailure = error;
+        if (
+          error._tag === "ConnectionBlockedError" &&
+          error.failureCause === "chat_session_forbidden" &&
+          error.credentialRevision !== undefined
+        ) {
+          yield* refusals.record(target.environmentId, error.credentialRevision);
+        }
       }
       if (error._tag === "ConnectionBlockedError") {
         const blockedIntent = yield* Ref.get(intent);

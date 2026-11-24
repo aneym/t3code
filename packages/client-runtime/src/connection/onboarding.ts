@@ -24,6 +24,7 @@ import {
   SshConnectionRegistration,
 } from "./catalog.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
+import { credentialRevision } from "./credentialRevision.ts";
 import { mapRemoteEnvironmentError } from "./errors.ts";
 import {
   BearerConnectionTarget,
@@ -56,6 +57,11 @@ export interface BearerConnectionUpdateInput {
   readonly httpBaseUrl: string;
 }
 
+export interface PairingCommit {
+  readonly environmentId: EnvironmentId;
+  readonly credentialRevision: string;
+}
+
 export class ConnectionOnboarding extends Context.Service<
   ConnectionOnboarding,
   {
@@ -63,6 +69,12 @@ export class ConnectionOnboarding extends Context.Service<
       input: PairingConnectionInput,
     ) => Effect.Effect<
       EnvironmentId,
+      ConnectionAttemptError | Persistence.ConnectionPersistenceError
+    >;
+    readonly commitPairing: (
+      input: PairingConnectionInput,
+    ) => Effect.Effect<
+      PairingCommit,
       ConnectionAttemptError | Persistence.ConnectionPersistenceError
     >;
     readonly registerSsh: (
@@ -242,16 +254,40 @@ const registerPairingConnection = Effect.fn(
   const alongside = yield* prepareAlternateRoutes(registration, input.alsoAt ?? []);
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
   const knownAddressOnly = input.expectedEnvironmentId === undefined;
-  if (
-    !(yield* registry.register(registration, { knownAddressOnly, alongside, unlessRemovedSince }))
-  ) {
-    return registration.target.environmentId;
+  const environmentId = registration.target.environmentId;
+  const committed = yield* registry.register(registration, {
+    knownAddressOnly,
+    alongside,
+    unlessRemovedSince,
+  });
+  if (committed) {
+    yield* registry.setCompatibility(environmentId, null);
+    yield* registry
+      .setEnabled(environmentId, true)
+      .pipe(Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }));
   }
-  yield* registry.setCompatibility(registration.target.environmentId, null);
-  yield* registry
-    .setEnabled(registration.target.environmentId, true)
-    .pipe(Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }));
-  return registration.target.environmentId;
+  return {
+    environmentId,
+    committed,
+    credentialRevision: credentialRevision(registration.credential.token),
+  };
+});
+
+const commitPairingConnection = Effect.fn(
+  "clientRuntime.connection.onboarding.commitPairingConnection",
+)(function* (input: PairingConnectionInput) {
+  const receipt = yield* registerPairingConnection(input);
+  if (!receipt.committed) {
+    return yield* new ConnectionBlockedError({
+      reason: "configuration",
+      failureCause: "environment_platform_managed",
+      detail: "This device already manages that environment, so the pairing was not saved.",
+    });
+  }
+  return {
+    environmentId: receipt.environmentId,
+    credentialRevision: receipt.credentialRevision,
+  } satisfies PairingCommit;
 });
 
 const isBearerCredential = Schema.is(BearerConnectionCredential);
@@ -395,7 +431,15 @@ export const make = Effect.gen(function* () {
   return ConnectionOnboarding.of({
     registerPairing: Effect.fnUntraced(
       function* (input) {
-        return yield* registerPairingConnection(input);
+        return (yield* registerPairingConnection(input)).environmentId;
+      },
+      Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
+      Effect.provideService(ClientCapabilities.ClientPresentation, presentation),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+    ),
+    commitPairing: Effect.fnUntraced(
+      function* (input) {
+        return yield* commitPairingConnection(input);
       },
       Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
       Effect.provideService(ClientCapabilities.ClientPresentation, presentation),

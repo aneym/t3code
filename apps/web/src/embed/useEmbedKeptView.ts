@@ -18,7 +18,6 @@ import {
   loadKeptViewAccess,
   noteKeptViewShown,
   onKeptViewAccessChange,
-  refuseKeptViews,
   reopenKeptViews,
   retainKeptViewsOf,
   wipeKeptViews,
@@ -121,7 +120,9 @@ const keptViewAccessAtom = Atom.family((environmentId: EnvironmentId) =>
       );
     };
     const stop = onKeptViewAccessChange((changed) => {
-      if (changed === environmentId) read();
+      if (changed !== environmentId) return;
+      get.setSelf(null);
+      read();
     });
     get.addFinalizer(() => {
       live = false;
@@ -135,12 +136,13 @@ const keptViewAccessAtom = Atom.family((environmentId: EnvironmentId) =>
 
 type SavedAccess = "open" | "unknown" | "refused";
 
-const savedAccessAtom = Atom.family((environmentId: EnvironmentId) =>
+export const savedAccessAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get): SavedAccess => {
     if (!get(keptEnvironmentsAtom(environmentId)).saved) return "open";
     if (embedConnectionRefused(get(connectionAtom(environmentId)))) return "refused";
     const access = get(keptViewAccessAtom(environmentId));
-    return access === null ? "unknown" : access.refused ? "refused" : "open";
+    if (access === null) return "unknown";
+    return access.refused || !access.current ? "refused" : "open";
   }).pipe(Atom.withLabel(`web-embed-saved-access:${environmentId}`)),
 );
 const OPEN_ACCESS_ATOM = Atom.make((): SavedAccess => "open").pipe(
@@ -169,15 +171,10 @@ export function useEmbedSavedEnvironmentIds(): ReadonlyArray<EnvironmentId> {
 }
 
 export function useEmbedSavedEnvironmentGuard(environmentId: EnvironmentId): void {
-  const refused = embedConnectionRefused(useAtomValue(connectionAtom(environmentId)));
   const access = useAtomValue(savedAccessAtom(environmentId));
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records this saved environment's refused pairing in IndexedDB so every frame stops showing and saving its views
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- stops every thread subscription and drops every in-memory snapshot of a saved environment while its access is unread, refused or bound to another pairing, so it reopens only from fresh state
   useEffect(() => {
-    if (refused) void refuseKeptViews(environmentId).catch(() => undefined);
-  }, [refused, environmentId]);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- stops every thread subscription and drops every in-memory snapshot of a refused environment until a pairing opens it again
-  useEffect(() => {
-    appAtomRegistry.set(environmentThreads.suspendedAtom(environmentId), access === "refused");
+    appAtomRegistry.set(environmentThreads.suspendedAtom(environmentId), access !== "open");
   }, [access, environmentId]);
 }
 

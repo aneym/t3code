@@ -44,7 +44,7 @@ const layerProvidedClientConnection = layerSnapshotLoader.pipe(
       usageLimitSources: true,
       usageLimitsCommand: true,
       providerCatalogsOnDemand: inEmbedPage(),
-    }),
+    }).pipe(Layer.provide(EmbedKeptViewCache.layerConnectionRefusals)),
   ),
   Layer.provideMerge(
     Layer.mergeAll(

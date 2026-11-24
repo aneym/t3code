@@ -3,7 +3,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import { environmentCatalog } from "../connection/catalog";
-import { connectPairing } from "../connection/onboarding";
+import { commitPairing } from "../connection/onboarding";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { embedFailureCodes } from "./embedFailureCodes";
 import { postToEmbedHost } from "./embedHost";
@@ -34,14 +34,15 @@ const completedPairs = new Map<string, EmbedPairResult>();
 
 async function pairThroughEmbedHost(pair: EmbedPair): Promise<EmbedPairResult> {
   const expectedEnvironmentId = pair.environmentId as EnvironmentId;
-  const pairedSince = Date.now();
-  const result = await connectPairing.run(appAtomRegistry, {
+  const result = await commitPairing.run(appAtomRegistry, {
     pairingUrl: pair.pairingUrl,
     expectedEnvironmentId,
     alsoAt: pair.alsoAt,
   });
   if (result._tag === "Failure") return failed(pair, squashAtomCommandFailure(result));
-  await grantKeptViews(expectedEnvironmentId, pairedSince).catch(() => undefined);
+  await grantKeptViews(expectedEnvironmentId, result.value.credentialRevision).catch(
+    () => undefined,
+  );
   return {
     requestId: pair.requestId,
     environmentId: pair.environmentId,

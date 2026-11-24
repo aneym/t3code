@@ -34,17 +34,42 @@ const environmentRange = (environmentId: string) =>
   IDBKeyRange.bound([environmentId], [environmentId, []]);
 
 export interface KeptViewAccess {
-  readonly generation: number;
   readonly refused: boolean;
+  readonly current: boolean;
 }
 
 interface StoredAccess {
   readonly generation: number;
-  readonly refusedGeneration: number | null;
-  readonly refusedAt: number | null;
+  readonly credential: string | null;
+  readonly refused: boolean;
+  readonly refusedCredentials: ReadonlyArray<string>;
 }
 
-const OPEN_ACCESS: StoredAccess = { generation: 0, refusedGeneration: null, refusedAt: null };
+const REFUSED_CREDENTIALS_KEPT = 8;
+
+const OPEN_ACCESS: StoredAccess = {
+  generation: 0,
+  credential: null,
+  refused: false,
+  refusedCredentials: [],
+};
+
+function storedAccess(value: unknown): StoredAccess {
+  if (typeof value !== "object" || value === null) return OPEN_ACCESS;
+  const record = value as Record<string, unknown>;
+  const generation = typeof record.generation === "number" ? record.generation : 0;
+  return {
+    generation,
+    credential: typeof record.credential === "string" ? record.credential : null,
+    refused:
+      typeof record.refused === "boolean"
+        ? record.refused
+        : record.refusedGeneration === generation,
+    refusedCredentials: Array.isArray(record.refusedCredentials)
+      ? record.refusedCredentials.filter((each): each is string => typeof each === "string")
+      : [],
+  };
+}
 
 let opening: Promise<IDBDatabase> | null = null;
 let sealed = false;
@@ -109,12 +134,8 @@ function readAccess(
   then: (stored: StoredAccess) => void,
 ): void {
   const request = access.get(environmentId);
-  request.addEventListener("success", () =>
-    then((request.result as StoredAccess | undefined) ?? OPEN_ACCESS),
-  );
+  request.addEventListener("success", () => then(storedAccess(request.result)));
 }
-
-const isRefused = (stored: StoredAccess) => stored.refusedGeneration === stored.generation;
 
 function announceAccess(environmentId: string): void {
   const channel = new BroadcastChannel(ACCESS_CHANNEL);
@@ -131,28 +152,42 @@ export function onKeptViewAccessChange(listener: (environmentId: string) => void
 }
 
 export async function loadKeptViewAccess(environmentId: string): Promise<KeptViewAccess> {
-  const result = await transact("readonly", (_view, _meta, access) => {
-    let read: KeptViewAccess = { generation: 0, refused: false };
-    readAccess(access, environmentId, (stored) => {
-      read = { generation: stored.generation, refused: isRefused(stored) };
+  const stored = await transact("readonly", (_view, _meta, access) => {
+    let read = OPEN_ACCESS;
+    readAccess(access, environmentId, (each) => {
+      read = each;
     });
     return () => read;
   });
-  if (!frameGenerations.has(environmentId)) frameGenerations.set(environmentId, result.generation);
-  return result;
+  if (!frameGenerations.has(environmentId)) frameGenerations.set(environmentId, stored.generation);
+  return {
+    refused: stored.refused,
+    current: frameGenerations.get(environmentId) === stored.generation,
+  };
 }
 
-export async function refuseKeptViews(environmentId: string): Promise<void> {
+export async function refuseKeptViews(
+  environmentId: string,
+  credentialRevision: string,
+): Promise<void> {
   await pendingGrants.get(environmentId)?.catch(() => undefined);
-  const known = frameGenerations.get(environmentId);
   await transact("readwrite", (view, meta, access) => {
     readAccess(access, environmentId, (stored) => {
-      const generation = known ?? stored.generation;
-      if (stored.generation !== generation) return;
+      const refusedCredentials = [
+        ...stored.refusedCredentials.filter((each) => each !== credentialRevision),
+        credentialRevision,
+      ].slice(-REFUSED_CREDENTIALS_KEPT);
+      const current = stored.credential === null || stored.credential === credentialRevision;
       access.put(
-        { ...stored, refusedGeneration: generation, refusedAt: Date.now() },
+        {
+          ...stored,
+          credential: current ? credentialRevision : stored.credential,
+          refused: current ? true : stored.refused,
+          refusedCredentials,
+        } satisfies StoredAccess,
         environmentId,
       );
+      if (!current) return;
       view.delete(environmentRange(environmentId));
       meta.delete(environmentRange(environmentId));
     });
@@ -161,17 +196,18 @@ export async function refuseKeptViews(environmentId: string): Promise<void> {
   announceAccess(environmentId);
 }
 
-export function grantKeptViews(environmentId: string, pairedSince: number): Promise<void> {
+export function grantKeptViews(environmentId: string, credentialRevision: string): Promise<void> {
   const grant = transact("readwrite", (_view, _meta, access) => {
     let next = 0;
     readAccess(access, environmentId, (stored) => {
       next = stored.generation + 1;
-      const refusedDuringPairing =
-        isRefused(stored) && stored.refusedAt !== null && stored.refusedAt >= pairedSince;
       access.put(
-        refusedDuringPairing
-          ? { generation: next, refusedGeneration: next, refusedAt: stored.refusedAt }
-          : { generation: next, refusedGeneration: null, refusedAt: null },
+        {
+          generation: next,
+          credential: credentialRevision,
+          refused: stored.refusedCredentials.includes(credentialRevision),
+          refusedCredentials: stored.refusedCredentials,
+        } satisfies StoredAccess,
         environmentId,
       );
     });
@@ -229,7 +265,7 @@ function withFrameAccess(
   readAccess(access, environmentId, (stored) => {
     seen = stored.generation;
     const generation = known ?? stored.generation;
-    if (sealed || isRefused(stored) || stored.generation !== generation) return;
+    if (sealed || stored.refused || stored.generation !== generation) return;
     then(generation);
   });
   return () => {
@@ -283,32 +319,43 @@ export function saveKeptView(
 }
 
 export function removeKeptView(environmentId: string, threadId: string): Promise<void> {
-  return transact("readwrite", (view, meta) => {
+  return transact("readwrite", (view, meta, access) => {
     const key = keyOf(environmentId, threadId);
-    view.delete(key);
-    meta.delete(key);
-    return () => undefined;
+    return withFrameAccess(access, environmentId, () => {
+      view.delete(key);
+      meta.delete(key);
+    });
   });
 }
 
 export function clearKeptViewsFor(environmentId: string): Promise<void> {
-  return transact("readwrite", (view, meta) => {
-    view.delete(environmentRange(environmentId));
-    meta.delete(environmentRange(environmentId));
-    return () => undefined;
-  });
+  return transact("readwrite", (view, meta, access) =>
+    withFrameAccess(access, environmentId, () => {
+      view.delete(environmentRange(environmentId));
+      meta.delete(environmentRange(environmentId));
+    }),
+  );
 }
 
 export function retainKeptViewsOf(environmentIds: ReadonlySet<string>): Promise<void> {
-  return transact("readwrite", (view, meta) => {
+  return transact("readwrite", (view, meta, access) => {
     const all = meta.getAll();
-    all.addEventListener("success", () =>
-      deleteEntries(
-        view,
-        meta,
-        (all.result as KeptViewMeta[]).filter((entry) => !environmentIds.has(entry.environmentId)),
-      ),
-    );
+    all.addEventListener("success", () => {
+      const dropped = (all.result as KeptViewMeta[]).filter(
+        (entry) => !environmentIds.has(entry.environmentId),
+      );
+      for (const environmentId of new Set(dropped.map((entry) => entry.environmentId))) {
+        const known = frameGenerations.get(environmentId);
+        readAccess(access, environmentId, (stored) => {
+          if (known === undefined || stored.generation !== known) return;
+          deleteEntries(
+            view,
+            meta,
+            dropped.filter((entry) => entry.environmentId === environmentId),
+          );
+        });
+      }
+    });
     return () => undefined;
   });
 }
@@ -335,16 +382,17 @@ export function markKeptViewShown(
   threadId: string,
   now = Date.now(),
 ): Promise<void> {
-  return transact("readwrite", (_view, meta) => {
+  return transact("readwrite", (_view, meta, access) => {
     const key = keyOf(environmentId, threadId);
-    const existing = meta.get(key);
-    existing.addEventListener("success", () => {
-      const previous = existing.result as KeptViewMeta | undefined;
-      if (previous !== undefined && previous.shownAt < now) {
-        meta.put({ ...previous, shownAt: now }, key);
-      }
+    return withFrameAccess(access, environmentId, () => {
+      const existing = meta.get(key);
+      existing.addEventListener("success", () => {
+        const previous = existing.result as KeptViewMeta | undefined;
+        if (previous !== undefined && previous.shownAt < now) {
+          meta.put({ ...previous, shownAt: now }, key);
+        }
+      });
     });
-    return () => undefined;
   });
 }
 
