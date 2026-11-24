@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useClientSettings } from "~/hooks/useSettings";
 import {
   computeStableMessagesTimelineRows,
   handoffRunsSignature,
@@ -41,8 +42,10 @@ export function useStableHandoffRuns(
  */
 export function useIncrementalTimelineRows(
   identity: string,
-  input: MessagesTimelineRowsInput,
+  rowsInput: MessagesTimelineRowsInput,
 ): MessagesTimelineRow[] {
+  const keepOpeningReplyVisible = useClientSettings((settings) => settings.keepOpeningReplyVisible);
+  const input = { ...rowsInput, keepOpeningReplyVisible };
   const [state, setState] = useState(() => ({
     identity,
     input,

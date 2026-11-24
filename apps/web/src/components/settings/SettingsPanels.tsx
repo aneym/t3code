@@ -41,7 +41,7 @@ import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../..
 import { AboutVersionTitle } from "./AboutVersionTitle";
 import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
 import { MobileAppSettingsRow } from "./MobileAppSettingsRow";
-import { HideTrailingStageLineRow } from "./HideTrailingStageLineRow";
+import * as ForkChatDisplay from "./ForkChatDisplayRows";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
@@ -542,9 +542,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.toolCallVisibility !== DEFAULT_UNIFIED_SETTINGS.toolCallVisibility
       ? ["Tool calls in chat"]
       : []),
-    ...(settings.hideTrailingStageLine !== DEFAULT_UNIFIED_SETTINGS.hideTrailingStageLine
-      ? ["Hide stage lines"]
-      : []),
+    ...ForkChatDisplay.changedForkChatDisplaySettings(settings),
     ...(settings.screenReaderAnnouncements !== DEFAULT_UNIFIED_SETTINGS.screenReaderAnnouncements
       ? ["Screen reader announcements"]
       : []),
@@ -668,7 +666,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       toolCallVisibility: DEFAULT_UNIFIED_SETTINGS.toolCallVisibility,
-      hideTrailingStageLine: DEFAULT_UNIFIED_SETTINGS.hideTrailingStageLine,
+      ...ForkChatDisplay.forkChatDisplayDefaults,
       screenReaderAnnouncements: DEFAULT_UNIFIED_SETTINGS.screenReaderAnnouncements,
       screenReaderWindowTitle: DEFAULT_UNIFIED_SETTINGS.screenReaderWindowTitle,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
@@ -1305,7 +1303,7 @@ export function ChatSettingsPanel() {
 
       <SettingsSection id="activity" title="Activity">
         <ToolCallVisibilityRow />
-        <HideTrailingStageLineRow />
+        <ForkChatDisplay.ForkChatDisplayRows />
       </SettingsSection>
 
       <SettingsSection id="screen-reader" title="Screen reader">

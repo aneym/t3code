@@ -1,4 +1,5 @@
 import type { MessagesTimelineRow } from "../components/chat/MessagesTimeline.logic";
+import { useClientSettings } from "../hooks/useSettings";
 import { useEmbedHostConnected } from "./embedHost";
 import { useEmbedLivePeek } from "./embedLivePeek";
 
@@ -27,12 +28,29 @@ function liveAnswerIndex(turn: ReadonlyArray<MessagesTimelineRow>): number {
   return -1;
 }
 
+function openingReplyRows(turn: ReadonlyArray<MessagesTimelineRow>): ReadonlySet<number> {
+  const kept = new Set<number>();
+  let open = true;
+  for (const [index, row] of turn.entries()) {
+    if (row.kind === "message" && row.message.role === "user") {
+      open = true;
+    } else if (STEPS.has(row.kind)) {
+      open = false;
+    } else if (open && row.kind === "message" && row.message.role === "assistant") {
+      if (!row.message.streaming && row.message.text.trim() !== "") kept.add(index);
+      open = row.message.text.trim() === "";
+    }
+  }
+  return kept;
+}
+
 export function useLiveTurnFold(
   rows: MessagesTimelineRow[],
   isWorking: boolean,
 ): MessagesTimelineRow[] {
   const embedded = useEmbedHostConnected();
   const peeked = useEmbedLivePeek();
+  const keepOpening = useClientSettings((settings) => settings.keepOpeningReplyVisible);
   if (!embedded || !isWorking) return rows;
   const header = rows.findIndex((row) => row.kind === "working");
   if (header < 0) return rows;
@@ -40,9 +58,11 @@ export function useLiveTurnFold(
   if (working?.kind === "working" && working.createdAt && working.createdAt === peeked) return rows;
   const turn = rows.slice(header + 1);
   const answer = liveAnswerIndex(turn);
+  const opening = keepOpening ? openingReplyRows(turn) : new Set<number>();
   const kept = turn.filter(
     (row, index) =>
       index === answer ||
+      opening.has(index) ||
       SHOWN.has(row.kind) ||
       asksPerson(row) ||
       (row.kind === "message" && (row.message.role === "user" || row.message.streaming)),
