@@ -334,6 +334,9 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
         const reply = Effect.callback<ReadonlyArray<any>, SqlError>((resume) => {
           const id = nextRequestId++;
           const posted = performance.now();
+          const cached = input.cached && !hasLargeBinding(input.params);
+          // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
+          worker.postMessage({ id, safeIntegers, ...input, cached });
           pending.set(id, {
             endsTransaction,
             resume: (reply) => {
@@ -350,9 +353,6 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
             },
           });
           if (pending.size === 1) worker.ref();
-          const cached = input.cached && !hasLargeBinding(input.params);
-          // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
-          worker.postMessage({ id, safeIntegers, ...input, cached });
         });
         // A posted write runs to the end, as it did on the event loop; the caller and its lock
         // must not move on while the worker is still applying it. Reads stay cancellable.
