@@ -1162,11 +1162,20 @@ export function createEnvironmentThreadStateAtoms<R, E>(
 ) {
   // Cache definitions must outlive collectible live-atom definitions. The
   // registry retains these nodes without retaining environment or RPC scopes.
+  const resumeKeys = new Map<string, Set<string>>();
   const resumeFamily = Atom.family((key: string) =>
-    Atom.make((): ThreadResumeCache => ({
-      snapshot: undefined,
-      owner: undefined,
-    })).pipe(
+    Atom.make((get): ThreadResumeCache => {
+      const { environmentId } = parseThreadKey(key);
+      const keys = resumeKeys.get(environmentId) ?? new Set<string>();
+      resumeKeys.set(environmentId, keys.add(key));
+      get.addFinalizer(() => {
+        keys.delete(key);
+        if (keys.size === 0 && resumeKeys.get(environmentId) === keys) {
+          resumeKeys.delete(environmentId);
+        }
+      });
+      return { snapshot: undefined, owner: undefined };
+    }).pipe(
       Atom.setIdleTTL(THREAD_SNAPSHOT_IDLE_TTL_MS),
       Atom.withLabel(`environment-thread-resume:${key}`),
     ),
@@ -1194,6 +1203,10 @@ export function createEnvironmentThreadStateAtoms<R, E>(
   return {
     stateAtom: (environmentId: EnvironmentIdType, threadId: ThreadIdType) =>
       family(threadKey({ environmentId, threadId })),
+    environmentAtoms: (environmentId: EnvironmentIdType) =>
+      [...(resumeKeys.get(environmentId) ?? [])].flatMap(
+        (key): ReadonlyArray<Atom.Atom<unknown>> => [resumeFamily(key), family(key)],
+      ),
   };
 }
 

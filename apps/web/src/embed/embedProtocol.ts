@@ -28,6 +28,11 @@ export const EMBED_SEND_MARK_MESSAGE = "t3-embed/send-mark";
 export const EMBED_PRESS_MESSAGE = "t3-embed/press";
 const EMBED_PRESS_RESULT_MESSAGE = "t3-embed/press-result";
 const EMBED_HOST_PRESS_MESSAGE = "t3-embed/host-press";
+const EMBED_PAIR_MESSAGE = "t3-embed/pair";
+export const EMBED_PAIR_RESULT_MESSAGE = "t3-embed/pair-result";
+export const EMBED_CONNECTION_MESSAGE = "t3-embed/connection";
+export const EMBED_HOST_VOICE_MESSAGE = "t3-embed/host-voice";
+export const EMBED_HOST_VOICE_PRESS_MESSAGE = "t3-embed/host-voice-press";
 
 export type EmbedPendingSendAction = "retry" | "discard";
 
@@ -75,8 +80,46 @@ export type EmbedPress = {
   readonly arguments: Readonly<Record<string, unknown>>;
 };
 
+export type EmbedPair = {
+  readonly requestId: string | null;
+  readonly environmentId: string;
+  readonly pairingUrl: string;
+  readonly alsoAt: ReadonlyArray<string>;
+};
+
+export type EmbedPairResult = {
+  readonly requestId: string | null;
+  readonly environmentId: string;
+  readonly ok: boolean;
+  readonly error?: string;
+  readonly failureCause?: string;
+  readonly routes?: ReadonlyArray<string>;
+};
+
+export type EmbedConnectionPhase =
+  | "available"
+  | "offline"
+  | "connecting"
+  | "backoff"
+  | "connected"
+  | "blocked"
+  | "refused"
+  | "unknown";
+
+export type EmbedConnectionReport = {
+  readonly environmentId: string;
+  readonly phase: EmbedConnectionPhase;
+  readonly reason: string | null;
+  readonly routeKind: string | null;
+  readonly hop: string | null;
+  readonly failureCause: string | null;
+  readonly httpStatus: number | null;
+};
+
 export type EmbedOutboundMessage =
   | EmbedReadyMessage
+  | (EmbedPairResult & { readonly type: typeof EMBED_PAIR_RESULT_MESSAGE })
+  | (EmbedConnectionReport & { readonly type: typeof EMBED_CONNECTION_MESSAGE })
   | EmbedRouteRefusedMessage
   | EmbedNumberKeyMessage
   | (EmbedSendMark & {
@@ -97,6 +140,7 @@ export type EmbedOutboundMessage =
     }
   | { readonly type: typeof EMBED_COMPOSER_FOCUS_MESSAGE; readonly focused: boolean }
   | { readonly type: typeof EMBED_CONTROLS_MESSAGE; readonly shown: boolean }
+  | { readonly type: typeof EMBED_HOST_VOICE_PRESS_MESSAGE }
   | {
       readonly type: typeof EMBED_PENDING_SEND_ACTION_MESSAGE;
       readonly thread: string;
@@ -354,4 +398,32 @@ export function readEmbedSendResultMessage(data: unknown): EmbedSendOutcome | nu
     outcome: "refused",
     message: text.slice(0, MAX_REFUSAL_LENGTH) || "The message wasn't sent.",
   };
+}
+
+const MAX_PAIR_ADDRESSES = 8;
+const MAX_URL_LENGTH = 2048;
+
+function readWebUrl(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > MAX_URL_LENGTH || !URL.canParse(value)) {
+    return null;
+  }
+  const protocol = new URL(value).protocol;
+  return protocol === "https:" || protocol === "http:" ? value : null;
+}
+
+export function readEmbedPairMessage(data: unknown): EmbedPair | null {
+  const message = readMessage(data, EMBED_PAIR_MESSAGE);
+  if (message === null) return null;
+  const { environmentId } = message;
+  if (typeof environmentId !== "string" || !CLEAR_THREAD.test(environmentId)) return null;
+  const pairingUrl = readWebUrl(message.pairingUrl);
+  if (pairingUrl === null) return null;
+  const alsoAt = Array.isArray(message.alsoAt)
+    ? message.alsoAt.slice(0, MAX_PAIR_ADDRESSES).flatMap((entry) => readWebUrl(entry) ?? [])
+    : [];
+  const requestId =
+    typeof message.requestId === "string" && CLEAR_THREAD.test(message.requestId)
+      ? message.requestId
+      : null;
+  return { requestId, environmentId, pairingUrl, alsoAt };
 }

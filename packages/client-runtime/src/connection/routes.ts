@@ -12,16 +12,13 @@ import {
   type ConnectionCatalogEntry,
   type ConnectionRoute,
 } from "./catalog.ts";
-import { BearerConnectionTarget, type ConnectionTarget } from "./model.ts";
+import {
+  BearerConnectionTarget,
+  type ConnectionFailureRouteKind,
+  type ConnectionTarget,
+} from "./model.ts";
 
-export type ConnectionRouteKind =
-  | "relay"
-  | "loopback"
-  | "lan"
-  | "tailnet"
-  | "vpn"
-  | "public"
-  | "ssh";
+export type ConnectionRouteKind = typeof ConnectionFailureRouteKind.Type;
 
 export const RELAY_ROUTE_ID = "relay";
 

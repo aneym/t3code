@@ -14,9 +14,10 @@ import type {
   ConnectionAttemptStage,
   PreparedConnection,
 } from "./model.ts";
-import { ConnectionTransientError } from "./model.ts";
+import { ConnectionBlockedError, ConnectionTransientError } from "./model.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import {
+  connectionRouteKind,
   connectionRoutes,
   routeEntry,
   routeHttpBaseUrl,
@@ -68,6 +69,17 @@ export class ConnectionDriver extends Context.Service<
   }
 >()("@t3tools/client-runtime/connection/driver/ConnectionDriver") {}
 
+const withRouteKind = (
+  failure: ConnectionAttemptError,
+  route: ConnectionRoute,
+): ConnectionAttemptError => {
+  if (failure.routeKind !== undefined) return failure;
+  const routeKind = connectionRouteKind(route);
+  return failure._tag === "ConnectionTransientError"
+    ? new ConnectionTransientError({ ...failure, routeKind })
+    : new ConnectionBlockedError({ ...failure, routeKind });
+};
+
 export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")(function* <R>(
   entry: ConnectionCatalogEntry,
   checkRoute: (route: ConnectionRoute) => Effect.Effect<RouteCheck>,
@@ -84,6 +96,7 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   const attemptScope = yield* Scope.Scope;
   let transient: ConnectionAttemptError | undefined;
   let blocked: ConnectionAttemptError | undefined;
+  let refused: ConnectionAttemptError | undefined;
   // Each route gets its own scope so a half-open session closes before the next try.
   const attempt = Effect.fnUntraced(function* (route: ConnectionRoute) {
     const routeScope = yield* Scope.fork(attemptScope);
@@ -93,8 +106,10 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
       Effect.result,
     );
     if (result._tag === "Failure") {
-      if (result.failure._tag === "ConnectionTransientError") transient ??= result.failure;
-      else blocked ??= result.failure;
+      const failure = withRouteKind(result.failure, route);
+      if (failure._tag === "ConnectionTransientError") transient ??= failure;
+      else if (failure.failureCause === "chat_session_forbidden") refused ??= failure;
+      else blocked ??= failure;
     }
     return result;
   });
@@ -131,7 +146,8 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     if (result.failure.reason === "unsupported") return yield* result.failure;
   }
   return yield* (
-    transient ??
+    refused ??
+      transient ??
       blocked ??
       new ConnectionTransientError({
         reason: "endpoint-unavailable",

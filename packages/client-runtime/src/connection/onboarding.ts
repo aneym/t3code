@@ -1,11 +1,13 @@
 import type { DesktopSshEnvironmentTarget, EnvironmentId } from "@t3tools/contracts";
 import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 
 import { bootstrapRemoteBearerSession } from "../authorization/remote.ts";
@@ -39,6 +41,7 @@ export interface PairingConnectionInput {
   readonly host?: string;
   readonly pairingCode?: string;
   readonly expectedEnvironmentId?: EnvironmentId;
+  readonly alsoAt?: ReadonlyArray<string>;
 }
 
 export interface SshConnectionInput {
@@ -152,13 +155,97 @@ export const preparePairingRegistration = Effect.fn(
   });
 });
 
+function alternateBaseUrl(address: string): string | null {
+  try {
+    const url = new URL(address);
+    return url.protocol === "https:" ? `${url.origin}/` : null;
+  } catch {
+    return null;
+  }
+}
+
+function alternateOrigins(
+  registration: BearerConnectionRegistration,
+  addresses: ReadonlyArray<string>,
+): ReadonlyArray<string | null> {
+  const seen = new Set([new URL(registration.profile.httpBaseUrl).origin]);
+  return addresses.flatMap((address) => {
+    const httpBaseUrl = alternateBaseUrl(address);
+    if (httpBaseUrl === null) return [null];
+    const origin = new URL(httpBaseUrl).origin;
+    if (seen.has(origin)) return [];
+    seen.add(origin);
+    return [httpBaseUrl];
+  });
+}
+
+const prepareAlternateRoute = Effect.fn(
+  "clientRuntime.connection.onboarding.prepareAlternateRoute",
+)(function* (registration: BearerConnectionRegistration, httpBaseUrl: string) {
+  const environmentId = registration.target.environmentId;
+  const requestInit = yield* Effect.serviceOption(FetchHttpClient.RequestInit);
+  const descriptor = yield* fetchRemoteEnvironmentDescriptor({ httpBaseUrl }).pipe(
+    Effect.provideService(FetchHttpClient.RequestInit, {
+      ...Option.getOrUndefined(requestInit),
+      redirect: "error",
+      cache: "no-store",
+    }),
+    Effect.mapError(mapRemoteEnvironmentError),
+  );
+  if (descriptor.environmentId !== environmentId) {
+    return yield* differentMachineError(descriptor.label);
+  }
+  const connectionId = bearerConnectionId(environmentId, httpBaseUrl);
+  const label = registration.target.label;
+  return new BearerConnectionRegistration({
+    target: new BearerConnectionTarget({ environmentId, label, connectionId }),
+    profile: new BearerConnectionProfile({
+      connectionId,
+      environmentId,
+      label,
+      httpBaseUrl,
+      wsBaseUrl: deriveWsBaseUrl(httpBaseUrl),
+    }),
+    credential: registration.credential,
+  });
+});
+
+const prepareAlternateRoutes = Effect.fn(
+  "clientRuntime.connection.onboarding.prepareAlternateRoutes",
+)(function* (registration: BearerConnectionRegistration, addresses: ReadonlyArray<string>) {
+  const prepared = yield* Effect.forEach(
+    alternateOrigins(registration, addresses),
+    (httpBaseUrl) =>
+      httpBaseUrl === null
+        ? Effect.logWarning("Skipped a paired environment's other address.", {
+            reason: "not-https",
+          }).pipe(Effect.as([]))
+        : prepareAlternateRoute(registration, httpBaseUrl).pipe(
+            Effect.map((route) => [route]),
+            Effect.catch((error) =>
+              Effect.logWarning("Could not add a paired environment's other address.", {
+                origin: new URL(httpBaseUrl).origin,
+                error: error._tag,
+                reason: "reason" in error ? error.reason : null,
+              }).pipe(Effect.as([])),
+            ),
+          ),
+    { concurrency: "unbounded" },
+  );
+  return prepared.flat();
+});
+
 const registerPairingConnection = Effect.fn(
   "clientRuntime.connection.onboarding.registerPairingConnection",
 )(function* (input: PairingConnectionInput) {
+  const unlessRemovedSince = yield* Clock.currentTimeNanos;
   const registration = yield* preparePairingRegistration(input);
+  const alongside = yield* prepareAlternateRoutes(registration, input.alsoAt ?? []);
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
   const knownAddressOnly = input.expectedEnvironmentId === undefined;
-  if (!(yield* registry.register(registration, { knownAddressOnly }))) {
+  if (
+    !(yield* registry.register(registration, { knownAddressOnly, alongside, unlessRemovedSince }))
+  ) {
     return registration.target.environmentId;
   }
   yield* registry.setCompatibility(registration.target.environmentId, null);

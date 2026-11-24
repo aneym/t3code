@@ -4,6 +4,7 @@ import type { ManagedRelayClientError } from "../relay/managedRelay.ts";
 import { dpopFailureMessage, relayProtectedErrorMessage } from "../relay/errorPresentation.ts";
 import type { RemoteEnvironmentAuthError } from "../authorization/remote.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
+import { isWebSocketTicketUrl } from "../rpc/http.ts";
 import {
   ConnectionBlockedError,
   type ConnectionAttemptError,
@@ -251,6 +252,16 @@ export function mapRemoteEnvironmentError(
         via,
       });
     case "RemoteEnvironmentAuthUndeclaredStatusError":
+      if (isChatSessionTicketRefusal(error)) {
+        return new ConnectionBlockedError({
+          reason: "permission",
+          detail: "The environment credential does not grant the required access.",
+          hop: "server",
+          via,
+          failureCause: "chat_session_forbidden",
+          httpStatus: 403,
+        });
+      }
       return new ConnectionTransientError({
         reason: "remote-unavailable",
         detail: error.message,
@@ -259,6 +270,18 @@ export function mapRemoteEnvironmentError(
         httpStatus: error.status,
       });
   }
+}
+
+function isChatSessionTicketRefusal(error: {
+  readonly status: number;
+  readonly requestUrl: string;
+  readonly code?: string | undefined;
+}): boolean {
+  return (
+    error.status === 403 &&
+    error.code === "chat_session_forbidden" &&
+    isWebSocketTicketUrl(error.requestUrl)
+  );
 }
 
 /**
