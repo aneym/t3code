@@ -116,9 +116,11 @@ const make = Effect.gen(function* () {
         Effect.provideService(Threads.ThreadManagementService, threads),
       );
       const descriptor = yield* environment.getDescriptor;
+      const skipFor = (id: EnvironmentId) =>
+        allowedSkip(input.allowed, id, current.agentPlacementExplicitOnly);
       const atStart = current.agentPlacementAtStart;
       const roomOn = current.agentPlacementByRoom || atStart;
-      const claimHere = atStart && allowedSkip(input.allowed, scope.environmentId) === undefined;
+      const claimHere = atStart && skipFor(scope.environmentId) === undefined;
       const repository = roomOn ? input.repository : undefined;
       const projectId =
         repository === undefined
@@ -235,8 +237,7 @@ const make = Effect.gen(function* () {
               environmentIds: linked
                 .filter(
                   (link) =>
-                    weightOf(link.environmentId) > 0 &&
-                    allowedSkip(input.allowed, link.environmentId) === undefined,
+                    weightOf(link.environmentId) > 0 && skipFor(link.environmentId) === undefined,
                 )
                 .map((link) => link.environmentId),
               keys,
@@ -250,7 +251,7 @@ const make = Effect.gen(function* () {
             const byRoom = roomOn || spill;
             const readings = new Map<EnvironmentId, AgentPlacementRoom | undefined>();
             const localSkipped =
-              allowedSkip(input.allowed, scope.environmentId) ??
+              skipFor(scope.environmentId) ??
               Room.localSkip(selectedProvider, current, projectId, modelSelection);
             const localRoom = byRoom ? yield* Room.localRoom : undefined;
             readings.set(scope.environmentId, localRoom);
@@ -299,7 +300,7 @@ const make = Effect.gen(function* () {
                 now: scoredAt,
               });
               const skipped =
-                allowedSkip(input.allowed, link.environmentId) ??
+                skipFor(link.environmentId) ??
                 Room.peerSkip({
                   scored,
                   snapshot,
@@ -367,6 +368,7 @@ const make = Effect.gen(function* () {
                     now,
                     current.agentPlacementMaxHoldMinutes,
                     atStart ? readings : new Map(),
+                    input.operation === "delegate",
                   )
                 : undefined;
             if (queued !== undefined)

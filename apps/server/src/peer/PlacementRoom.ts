@@ -109,6 +109,7 @@ export const queuePick = (
   now: number,
   maxHoldMinutes: number,
   readings: ReadonlyMap<EnvironmentId, AgentPlacementRoom | undefined>,
+  holds: boolean,
 ) => {
   const chosen = scores
     .filter((score) => matching.has(score.environmentId) && queueable(score))
@@ -123,6 +124,12 @@ export const queuePick = (
     return {
       environmentId: chosen.environmentId,
       reason: `Recent starts fill every machine; ${chosen.label} still reports ${reported} of ${raw?.cap} builder slots free, so it starts there.`,
+      hold: undefined,
+    };
+  if (!holds)
+    return {
+      environmentId: chosen.environmentId,
+      reason: `Every machine is full; starting now on ${chosen.label}, the shortest queue. Only delegated tasks wait for room.`,
       hold: undefined,
     };
   const position = (chosen.room?.held ?? 0) + 1;

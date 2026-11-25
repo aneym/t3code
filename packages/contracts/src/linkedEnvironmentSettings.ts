@@ -16,6 +16,9 @@ export const LinkedEnvironmentServerSettingsFields = {
   agentPlacementPinnedEnvironmentId: Schema.NullOr(EnvironmentId).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  agentPlacementExplicitOnly: Schema.Array(EnvironmentId).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   agentPlacementHealthLine: AgentPlacementHealthLine.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_AGENT_PLACEMENT_HEALTH_LINE)),
   ),
@@ -38,6 +41,7 @@ export const LinkedEnvironmentServerSettingsPatchFields = {
   agentLoadBalancingEnabled: Schema.optionalKey(Schema.Boolean),
   agentLoadBalancingWeights: Schema.optionalKey(Weights),
   agentPlacementPinnedEnvironmentId: Schema.optionalKey(Schema.NullOr(EnvironmentId)),
+  agentPlacementExplicitOnly: Schema.optionalKey(Schema.Array(EnvironmentId)),
   agentPlacementHealthLine: Schema.optionalKey(AgentPlacementHealthLine),
   agentPlacementByRoom: Schema.optionalKey(Schema.Boolean),
   agentPlacementAtStart: Schema.optionalKey(Schema.Boolean),

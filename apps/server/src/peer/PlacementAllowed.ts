@@ -11,8 +11,16 @@ const isAllowed = (allowed: Allowed, environmentId: EnvironmentId) =>
 const invalid = (message: string) =>
   Effect.fail(new OrchestratorMcpFailure({ code: "invalid_request", message }));
 
-export const allowedSkip = (allowed: Allowed, environmentId: EnvironmentId) =>
-  isAllowed(allowed, environmentId) ? undefined : "Not in the allowed machines.";
+export const allowedSkip = (
+  allowed: Allowed,
+  environmentId: EnvironmentId,
+  explicitOnly: ReadonlyArray<EnvironmentId>,
+) =>
+  !isAllowed(allowed, environmentId)
+    ? "Not in the allowed machines."
+    : allowed === undefined && explicitOnly.includes(environmentId)
+      ? "Takes only starts that name it in allowedEnvironmentIds."
+      : undefined;
 
 export const requireAllowed = (allowed: Allowed, environmentId: EnvironmentId, why?: string) =>
   isAllowed(allowed, environmentId)
