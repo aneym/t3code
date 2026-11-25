@@ -103,6 +103,12 @@ const threadStartCommand = Command.make("start", {
     Flag.withDescription("Branch name for the new worktree."),
     Flag.optional,
   ),
+  machines: Flag.String("machines").pipe(
+    Flag.withDescription(
+      "Comma-separated environment ids the thread may be placed on. Defaults to every linked machine.",
+    ),
+    Flag.optional,
+  ),
   wait: waitFlag,
   json: jsonFlag,
 }).pipe(
@@ -129,6 +135,14 @@ const threadStartCommand = Command.make("start", {
               title,
               message,
               ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
+              ...(Option.isSome(flags.machines)
+                ? {
+                    allowedEnvironmentIds: flags.machines.value
+                      .split(",")
+                      .map((id) => id.trim())
+                      .filter((id) => id.length > 0),
+                  }
+                : {}),
               ...(Option.isSome(flags.provider) && Option.isSome(flags.model)
                 ? {
                     modelSelection: {

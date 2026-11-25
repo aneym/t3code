@@ -1,5 +1,6 @@
 import {
   AgentPlacementReceipt,
+  type AgentPlacementRoom,
   type AgentPlacementScore,
   EnvironmentId,
   ModelSelection,
@@ -18,7 +19,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/sql/SqlClient";
+import * as Semaphore from "effect/Semaphore";
 import * as Threads from "../orchestration-v2/ThreadManagementService.ts";
 import * as Config from "../config.ts";
 import * as Settings from "../serverSettings.ts";
@@ -31,18 +32,20 @@ import * as Peers from "./PeerMcpClient.ts";
 import * as Links from "./PeerLinks.ts";
 import * as PlacementSnapshots from "./PlacementSnapshots.ts";
 import * as PlacementDecisions from "./PlacementDecisions.ts";
+import * as PlacementReceipts from "./PlacementReceipts.ts";
 import * as PlacementWeights from "./PlacementWeights.ts";
 import * as PlacementFallback from "./PlacementFallback.ts";
-import { pickWinner, pinAllowed, placementKeys, spillSkip } from "./PlacementSpill.ts";
+import { pickWinner, placementKeys, spillSkip } from "./PlacementSpill.ts";
 import * as Room from "./PlacementRoom.ts";
+import * as Claims from "./PlacementClaims.ts";
+import { pinnedPlacement } from "./PlacementPin.ts";
+import { allowedSkip, requireAllowed } from "./PlacementAllowed.ts";
 import * as Invocation from "../mcp/McpInvocationContext.ts";
 import { assertLiveCaller, readCaller, unavailable } from "../mcp/threadAccess.ts";
 import { callerLinkOrigin } from "../mcp/linkOrigin.ts";
 import { requestPrincipal } from "../mcp/ownerCliSession.ts";
 
 export type Selected = PlacementFallback.Selected;
-const decodeReceipt = Schema.decodeUnknownEffect(Schema.fromJsonString(AgentPlacementReceipt));
-const encodeReceipt = Schema.encodeEffect(Schema.fromJsonString(AgentPlacementReceipt));
 
 export class AgentPlacement extends Context.Service<
   AgentPlacement,
@@ -60,6 +63,7 @@ export class AgentPlacement extends Context.Service<
         readonly localOnlyReason?: string | undefined;
         readonly spill?: boolean | undefined;
         readonly exclude?: ReadonlyArray<EnvironmentId> | undefined;
+        readonly allowed?: ReadonlyArray<EnvironmentId> | undefined;
       },
     ) => Effect.Effect<Selected | undefined, OrchestratorMcpFailure>;
     readonly run: PlacementFallback.Run;
@@ -86,11 +90,12 @@ const make = Effect.gen(function* () {
   const lock = yield* KeyedLock.make<string>();
   const random = yield* SecureRandom.SecureRandom;
   const encodeModel = Schema.encodeEffect(Schema.fromJsonString(ModelSelection));
-  const sql = yield* SqlClient.SqlClient;
+  const { record, read } = yield* PlacementReceipts.make;
   const snapshots = yield* PlacementSnapshots.make(peers);
   const encodeKey = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.String)));
   const decisions = yield* PlacementDecisions.make(config.stateDir);
-  const claims = Room.makeClaims();
+  const claims = Claims.make();
+  const serial = yield* Semaphore.make(1);
   const enabled = settings.getSettings.pipe(
     Effect.map(
       (current) =>
@@ -101,7 +106,7 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => false),
   );
 
-  const select: AgentPlacement["Service"]["select"] = Effect.fn("AgentPlacement.select")(
+  const choose: AgentPlacement["Service"]["select"] = Effect.fn("AgentPlacement.choose")(
     function* (scope, input) {
       const current = yield* settings.getSettings.pipe(Effect.mapError(unavailable));
       if (
@@ -159,7 +164,15 @@ const make = Effect.gen(function* () {
       const origin = callerLinkOrigin(caller);
       if ((origin !== undefined && linkOriginIsFenced(origin)) || scope.client?.linked === true)
         return local("Placement was resolved by the originating environment.");
-      if (input.localOnlyReason !== undefined) return local(input.localOnlyReason);
+      if (input.localOnlyReason !== undefined) {
+        claims.claim(
+          scope.environmentId,
+          yield* Room.localRoom,
+          false,
+          DateTime.toEpochMillis(yield* DateTime.now),
+        );
+        return local(input.localOnlyReason);
+      }
       if ((projectId === undefined && repository === undefined) || modelSelection === undefined)
         return local("No project or model to match across environments.");
       if (
@@ -187,7 +200,7 @@ const make = Effect.gen(function* () {
             );
       const keyed = (selection: PlacementDecisions.Selection): Selected =>
         digest === undefined ? selection : { ...selection, decisionKey: digest };
-      const choose = Effect.gen(function* () {
+      const decide = Effect.gen(function* () {
         if (!(yield* enabled)) return undefined;
         const now = DateTime.toEpochMillis(yield* DateTime.now);
         if (digest !== undefined) {
@@ -211,158 +224,169 @@ const make = Effect.gen(function* () {
           const line = current.agentPlacementHealthLine;
           const weightOf = (environmentId: EnvironmentId) =>
             PlacementWeights.callerWeight(current.agentLoadBalancingWeights[environmentId]);
-          const scores: Array<AgentPlacementScore> = [];
-          const matching = new Map<EnvironmentId, ProjectId>();
-          const byRoom = current.agentPlacementByRoom || spill;
-          const localSkipped = Room.localSkip(selectedProvider, current, projectId, modelSelection);
-          const localScore = scoreAgentPlacement({
-            room: byRoom ? yield* Room.localRoom : undefined,
-            environmentId: scope.environmentId,
-            label: descriptor.label,
-            resources: yield* resources.read,
-            weight: weightOf(scope.environmentId),
-            line,
-            now,
-          });
-          if (localSkipped === undefined && projectId !== undefined)
-            matching.set(scope.environmentId, projectId);
-          scores.push(
-            localSkipped === undefined
-              ? localScore
-              : { ...localScore, score: 0, skipped: localSkipped },
-          );
-          if (
+          const linked =
             current.linkedEnvironmentsEnabled &&
             current.loadBalancingIncludeLinkedEnvironments &&
             scope.linkedEnvironments !== false
-          ) {
-            yield* Effect.gen(function* () {
-              const linked = (yield* links.stored).filter(
-                (link) =>
-                  link.access === "full-access" && DateTime.toEpochMillis(link.expiresAt) > now,
-              );
-              yield* snapshots.refresh({
-                environmentIds: linked
-                  .filter((link) => weightOf(link.environmentId) > 0)
-                  .map((link) => link.environmentId),
-                keys,
-                limits: caller.limits,
-                now,
-              });
-              const scoredAt = DateTime.toEpochMillis(yield* DateTime.now);
-              for (const link of linked) {
-                const entry = snapshots.cached(link.environmentId, keys, now);
-                const snapshot = entry?.value;
-                const sources = {
-                  callerEntry: current.agentLoadBalancingWeights[link.environmentId],
-                  own: snapshot?.placementWeight,
-                  label: snapshot?.label ?? link.label,
-                };
-                const scored = scoreAgentPlacement({
-                  room: byRoom
-                    ? claims.adjust(link.environmentId, snapshot?.placementRoom, entry?.expiresAt)
-                    : undefined,
-                  environmentId: link.environmentId,
-                  label: sources.label,
-                  resources: snapshot?.hostResources,
-                  weight: PlacementWeights.linkedWeight(sources),
-                  line: snapshot?.placementHealthLine ?? line,
-                  now: scoredAt,
-                });
-                const skipped =
-                  Room.peerSkip({
-                    scored,
-                    snapshot,
-                    failure:
-                      entry?.failure ?? `No reply within ${PlacementSnapshots.READ_SECONDS} s.`,
-                    modelSelection,
-                    driver,
-                  }) ??
-                  (spill ? spillSkip(scored.room, link.environmentId, input.exclude) : undefined);
-                if (skipped === undefined && snapshot?.placementProjectId !== undefined)
-                  matching.set(link.environmentId, snapshot.placementProjectId);
-                scores.push(
-                  PlacementWeights.explainWeight(
-                    skipped === undefined ? scored : { ...scored, score: 0, skipped },
-                    sources,
-                  ),
-                );
-              }
-            }).pipe(
-              Effect.timeout(`${PlacementSnapshots.READ_SECONDS + 2} seconds`),
-              Effect.ignore,
-            );
-          }
-          const decided = (
-            environmentId: EnvironmentId,
-            mode: "auto" | "pinned",
-            reason: string,
-            hold?: PlacementDecisions.Selection["placement"]["hold"],
-          ): PlacementDecisions.Selection => {
-            const chosen = scores.find((entry) => entry.environmentId === environmentId);
-            const mapped = matching.get(environmentId) ?? projectId;
-            if (byRoom && environmentId !== scope.environmentId)
-              claims.claim(
-                environmentId,
-                snapshots.cached(environmentId, keys, now)?.expiresAt,
-                hold !== undefined,
-              );
-            return {
-              ...(mapped === undefined ? {} : { projectId: mapped }),
-              modelSelection,
-              placement: {
-                environmentId,
-                label: chosen?.label ?? descriptor.label,
-                reason:
-                  environmentId === scope.environmentId
-                    ? reason
-                    : `${reason} Project mapped to ${mapped} by repository ${keys[0]}.`,
-                mode,
-                decidedAt: now,
-                scores,
-                ...(hold === undefined ? {} : { hold }),
-              },
-            };
-          };
-          const projectElsewhere = [...matching].some(
-            ([environmentId, mapped]) =>
-              environmentId !== scope.environmentId && mapped === projectId,
-          );
-          if (
-            !spill &&
-            input.projectId !== undefined &&
-            matching.has(scope.environmentId) &&
-            weightOf(scope.environmentId) > 0 &&
-            !projectElsewhere
-          )
-            return decided(scope.environmentId, "pinned", "Pinned by project.");
-          const pinned = current.agentPlacementPinnedEnvironmentId;
-          if (
-            pinned !== null &&
-            matching.has(pinned) &&
-            pinAllowed(scores, pinned, scope.environmentId, spill)
-          )
-            return decided(pinned, "pinned", "Pinned to this environment in settings.");
-          const winner = pickWinner(scores, scope.environmentId, spill);
-          const queued =
-            winner === undefined && byRoom && !spill
-              ? Room.queuePick(scores, matching, now, current.agentPlacementMaxHoldMinutes)
-              : undefined;
-          if (queued !== undefined)
-            return decided(queued.environmentId, "auto", queued.reason, queued.hold);
-          if (winner === undefined)
-            return local(
-              spill
-                ? "No other machine has room; holding here."
-                : "No environment is under its health line with a match; launching here.",
-              scores,
+              ? (yield* links.stored.pipe(Effect.orElseSucceed(() => []))).filter(
+                  (link) =>
+                    link.access === "full-access" && DateTime.toEpochMillis(link.expiresAt) > now,
+                )
+              : [];
+          yield* snapshots
+            .refresh({
+              environmentIds: linked
+                .filter(
+                  (link) =>
+                    weightOf(link.environmentId) > 0 &&
+                    allowedSkip(input.allowed, link.environmentId) === undefined,
+                )
+                .map((link) => link.environmentId),
+              keys,
+              limits: caller.limits,
               now,
+            })
+            .pipe(Effect.timeout(`${PlacementSnapshots.READ_SECONDS + 2} seconds`), Effect.ignore);
+          return yield* Effect.gen(function* () {
+            const scores: Array<AgentPlacementScore> = [];
+            const matching = new Map<EnvironmentId, ProjectId>();
+            const byRoom = current.agentPlacementByRoom || current.agentPlacementAtStart || spill;
+            const readings = new Map<EnvironmentId, AgentPlacementRoom | undefined>();
+            const localSkipped =
+              allowedSkip(input.allowed, scope.environmentId) ??
+              Room.localSkip(selectedProvider, current, projectId, modelSelection);
+            const localRoom = byRoom ? yield* Room.localRoom : undefined;
+            readings.set(scope.environmentId, localRoom);
+            const localScore = scoreAgentPlacement({
+              ...claims.adjust(
+                scope.environmentId,
+                { room: localRoom, resources: yield* resources.read },
+                now,
+              ),
+              environmentId: scope.environmentId,
+              label: descriptor.label,
+              weight: weightOf(scope.environmentId),
+              line,
+              now,
+            });
+            if (localSkipped === undefined && projectId !== undefined)
+              matching.set(scope.environmentId, projectId);
+            scores.push(
+              localSkipped === undefined
+                ? localScore
+                : { ...localScore, score: 0, skipped: localSkipped },
             );
-          return decided(
-            winner.environmentId,
-            "auto",
-            `${pinned === null ? "" : "The pinned environment is unavailable. "}${Room.winnerReason(winner)}`,
-          );
+            const scoredAt = DateTime.toEpochMillis(yield* DateTime.now);
+            for (const link of linked) {
+              const entry = snapshots.cached(link.environmentId, keys, now);
+              const snapshot = entry?.value;
+              const sources = {
+                callerEntry: current.agentLoadBalancingWeights[link.environmentId],
+                own: snapshot?.placementWeight,
+                label: snapshot?.label ?? link.label,
+              };
+              const reading = byRoom ? snapshot?.placementRoom : undefined;
+              readings.set(link.environmentId, reading);
+              const scored = scoreAgentPlacement({
+                ...claims.adjust(
+                  link.environmentId,
+                  { room: reading, resources: snapshot?.hostResources },
+                  scoredAt,
+                ),
+                environmentId: link.environmentId,
+                label: sources.label,
+                weight: PlacementWeights.linkedWeight(sources),
+                line: snapshot?.placementHealthLine ?? line,
+                now: scoredAt,
+              });
+              const skipped =
+                allowedSkip(input.allowed, link.environmentId) ??
+                Room.peerSkip({
+                  scored,
+                  snapshot,
+                  failure:
+                    entry?.failure ?? `No reply within ${PlacementSnapshots.READ_SECONDS} s.`,
+                  modelSelection,
+                  driver,
+                }) ??
+                (spill ? spillSkip(scored.room, link.environmentId, input.exclude) : undefined);
+              if (skipped === undefined && snapshot?.placementProjectId !== undefined)
+                matching.set(link.environmentId, snapshot.placementProjectId);
+              scores.push(
+                PlacementWeights.explainWeight(
+                  skipped === undefined ? scored : { ...scored, score: 0, skipped },
+                  sources,
+                ),
+              );
+            }
+            const decided = (
+              environmentId: EnvironmentId,
+              mode: "auto" | "pinned",
+              reason: string,
+              hold?: PlacementDecisions.Selection["placement"]["hold"],
+            ): PlacementDecisions.Selection => {
+              const chosen = scores.find((entry) => entry.environmentId === environmentId);
+              const mapped = matching.get(environmentId) ?? projectId;
+              claims.claim(environmentId, readings.get(environmentId), hold !== undefined, now);
+              return {
+                ...(mapped === undefined ? {} : { projectId: mapped }),
+                modelSelection,
+                placement: {
+                  environmentId,
+                  label: chosen?.label ?? descriptor.label,
+                  reason:
+                    environmentId === scope.environmentId
+                      ? reason
+                      : `${reason} Project mapped to ${mapped} by repository ${keys[0]}.`,
+                  mode,
+                  decidedAt: now,
+                  scores,
+                  ...(hold === undefined ? {} : { hold }),
+                },
+              };
+            };
+            const pin = pinnedPlacement({
+              here: scope.environmentId,
+              namedProjectId: input.projectId,
+              projectId,
+              matching,
+              scores,
+              hereWeight: weightOf(scope.environmentId),
+              settingsPin: current.agentPlacementPinnedEnvironmentId,
+              atStart: current.agentPlacementAtStart,
+              spill,
+            });
+            if (pin !== undefined) return decided(pin.environmentId, "pinned", pin.reason);
+            const pinned = current.agentPlacementPinnedEnvironmentId;
+            const winner = pickWinner(scores, scope.environmentId, spill);
+            const queued =
+              winner === undefined && byRoom && !spill
+                ? Room.queuePick(
+                    scores,
+                    matching,
+                    now,
+                    current.agentPlacementMaxHoldMinutes,
+                    readings,
+                  )
+                : undefined;
+            if (queued !== undefined)
+              return decided(queued.environmentId, "auto", queued.reason, queued.hold);
+            if (winner === undefined) {
+              claims.claim(scope.environmentId, readings.get(scope.environmentId), false, now);
+              return local(
+                spill
+                  ? "No other machine has room; holding here."
+                  : "No environment is under its health line with a match; launching here.",
+                scores,
+                now,
+              );
+            }
+            return decided(
+              winner.environmentId,
+              "auto",
+              `${pinned === null ? "" : "The pinned environment is unavailable. "}${Room.winnerReason(winner)}`,
+            );
+          }).pipe(serial.withPermits(1));
         });
         const result = yield* evaluate.pipe(
           Effect.timeout(`${PlacementSnapshots.READ_SECONDS * 2} seconds`),
@@ -378,51 +402,26 @@ const make = Effect.gen(function* () {
           ),
         );
       });
-      return yield* digest === undefined ? choose : lock.withLock(digest, choose);
+      return yield* digest === undefined ? decide : lock.withLock(digest, decide);
     },
   );
-  const record: AgentPlacement["Service"]["record"] = Effect.fn("AgentPlacement.record")(
-    function* (threadId, placement) {
-      if (placement === undefined) return;
-      const json = yield* encodeReceipt(placement);
-      const recordedAt = placement.decidedAt ?? DateTime.toEpochMillis(yield* DateTime.now);
-      yield* sql`INSERT INTO aneym_thread_placements (thread_id, placement_json, recorded_at)
-        VALUES (${threadId}, ${json}, ${recordedAt})
-        ON CONFLICT(thread_id) DO UPDATE SET placement_json = excluded.placement_json,
-          recorded_at = excluded.recorded_at`;
+  const select: AgentPlacement["Service"]["select"] = Effect.fn("AgentPlacement.select")(
+    function* (scope, input) {
+      const selected = yield* choose(scope, input);
+      if (selected !== undefined)
+        yield* requireAllowed(
+          input.allowed,
+          selected.placement.environmentId,
+          selected.placement.reason,
+        );
+      return selected;
     },
-    Effect.ignore({ log: true }),
   );
-  const read: AgentPlacement["Service"]["read"] = Effect.fn("AgentPlacement.read")(
-    function* (threadId) {
-      const rows = yield* sql<{ readonly placement_json: string }>`
-        SELECT placement_json FROM aneym_thread_placements WHERE thread_id = ${threadId}`;
-      const row = rows[0];
-      return row === undefined ? undefined : yield* decodeReceipt(row.placement_json);
-    },
-    Effect.orElseSucceed(() => undefined),
-  );
-  const fellBack = Effect.fn("AgentPlacement.fellBack")(function* (
-    scope: Invocation.McpInvocationScope,
-    selected: Selected,
-    answer: string,
-  ) {
-    const descriptor = yield* environment.getDescriptor;
-    const now = DateTime.toEpochMillis(yield* DateTime.now);
-    const chosen = selected.placement;
-    const placement: AgentPlacementReceipt = {
-      environmentId: scope.environmentId,
-      label: descriptor.label,
-      reason: `${chosen.label} was chosen (${chosen.reason}) and answered: ${answer} Started here instead.`,
-      mode: "local",
-      decidedAt: now,
-      ...(chosen.scores === undefined ? {} : { scores: chosen.scores }),
-    };
-    if (selected.decisionKey !== undefined)
-      yield* decisions.save(selected.decisionKey, now, { placement }).pipe(Effect.ignore);
-    return placement;
+  const run = PlacementFallback.make({
+    newKey: random.uuidV4().pipe(Effect.orDie),
+    label: environment.getDescriptor.pipe(Effect.map((descriptor) => descriptor.label)),
+    save: (key, now, placement) => decisions.save(key, now, { placement }).pipe(Effect.ignore),
   });
-  const run = PlacementFallback.make({ newKey: random.uuidV4().pipe(Effect.orDie), fellBack });
   return AgentPlacement.of({ enabled, select, run, record, read });
 });
 

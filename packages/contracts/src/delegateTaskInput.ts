@@ -8,7 +8,10 @@ import {
   OrchestratorMcpRuntimeMode,
   OrchestratorMcpTitle,
 } from "./orchestratorMcp.ts";
-import { OrchestratorMcpTarget } from "./orchestratorMcpTarget.ts";
+import {
+  OrchestratorMcpAllowedEnvironments,
+  OrchestratorMcpTarget,
+} from "./orchestratorMcpTarget.ts";
 
 export const OrchestratorMcpTaskRole = Schema.Literals([
   "implementation",
@@ -22,7 +25,12 @@ export type OrchestratorMcpTaskRole = typeof OrchestratorMcpTaskRole.Type;
 
 export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   task: OrchestratorMcpPrompt,
-  target: Schema.optional(OrchestratorMcpTarget),
+  target: Schema.optional(
+    Schema.Struct({
+      ...OrchestratorMcpTarget.fields,
+      allowedEnvironmentIds: Schema.optional(OrchestratorMcpAllowedEnvironments),
+    }),
+  ),
   title: Schema.optional(OrchestratorMcpTitle),
   role: Schema.optional(OrchestratorMcpTaskRole),
   isolation: Schema.optional(

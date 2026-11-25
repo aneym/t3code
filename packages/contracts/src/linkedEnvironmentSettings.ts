@@ -20,6 +20,7 @@ export const LinkedEnvironmentServerSettingsFields = {
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_AGENT_PLACEMENT_HEALTH_LINE)),
   ),
   agentPlacementByRoom: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  agentPlacementAtStart: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   agentPlacementPaused: Schema.NullOr(Schema.String).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -39,6 +40,7 @@ export const LinkedEnvironmentServerSettingsPatchFields = {
   agentPlacementPinnedEnvironmentId: Schema.optionalKey(Schema.NullOr(EnvironmentId)),
   agentPlacementHealthLine: Schema.optionalKey(AgentPlacementHealthLine),
   agentPlacementByRoom: Schema.optionalKey(Schema.Boolean),
+  agentPlacementAtStart: Schema.optionalKey(Schema.Boolean),
   agentPlacementPaused: Schema.optionalKey(Schema.NullOr(Schema.String)),
   agentPlacementMaxHoldMinutes: Schema.optionalKey(HoldMinutes),
   agentPlacementSpillWhenFull: Schema.optionalKey(Schema.Boolean),

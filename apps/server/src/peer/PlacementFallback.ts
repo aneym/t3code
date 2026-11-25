@@ -1,4 +1,5 @@
 import type { AgentPlacementReceipt } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import type * as Invocation from "../mcp/McpInvocationContext.ts";
@@ -24,11 +25,12 @@ export type Run = <A, E, R1, R2>(
 export const make =
   (deps: {
     readonly newKey: Effect.Effect<string>;
-    readonly fellBack: (
-      scope: Invocation.McpInvocationScope,
-      selected: Selected,
-      answer: string,
-    ) => Effect.Effect<AgentPlacementReceipt>;
+    readonly label: Effect.Effect<string>;
+    readonly save: (
+      key: string,
+      now: number,
+      placement: AgentPlacementReceipt,
+    ) => Effect.Effect<void>;
   }): Run =>
   (scope, selected, clientRequestId, there, here) =>
     Effect.gen(function* () {
@@ -44,13 +46,21 @@ export const make =
         Effect.catchIf(
           (error) => !messageOf(error).startsWith(SPILL_REFUSED),
           (error) =>
-            deps
-              .fellBack(scope, selected, messageOf(error))
-              .pipe(
-                Effect.flatMap((placement) =>
-                  Effect.map(here, (result) => ({ result, placement })),
-                ),
-              ),
+            Effect.gen(function* () {
+              const now = DateTime.toEpochMillis(yield* DateTime.now);
+              const chosen = selected.placement;
+              const placement: AgentPlacementReceipt = {
+                environmentId: scope.environmentId,
+                label: yield* deps.label,
+                reason: `${chosen.label} was chosen (${chosen.reason}) and answered: ${messageOf(error)} Started here instead.`,
+                mode: "local",
+                decidedAt: now,
+                ...(chosen.scores === undefined ? {} : { scores: chosen.scores }),
+              };
+              if (selected.decisionKey !== undefined)
+                yield* deps.save(selected.decisionKey, now, placement);
+              return { result: yield* here, placement };
+            }),
         ),
       );
     }).pipe(Effect.withSpan("PlacementFallback.run"));

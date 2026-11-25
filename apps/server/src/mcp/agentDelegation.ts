@@ -15,6 +15,7 @@ import {
 } from "../orchestration-v2/DelegatedChildClaims.ts";
 import * as Gate from "../orchestration-v2/DelegatedChildStartGate.ts";
 import * as AgentPlacement from "../peer/AgentPlacement.ts";
+import { requireAllowed } from "../peer/PlacementAllowed.ts";
 import * as PlacementRoom from "../peer/PlacementRoom.ts";
 import { SpillLaunch } from "../peer/PlacementSpill.ts";
 import * as WorktreeTransfer from "../peer/WorktreeTransfer.ts";
@@ -180,6 +181,9 @@ const delegateNew = Effect.fn("AgentDelegation.delegateNew")(function* (
     (yield* gate.marksLight(parentThreadId));
   const refusal = light ? lightRefusal(request, scope.environmentId) : undefined;
   if (refusal !== undefined) return yield* repositoryFailure(refusal);
+  const allowed = request.target?.allowedEnvironmentIds;
+  const named = request.target?.environmentId;
+  if (named !== undefined) yield* requireAllowed(allowed, named);
   const { class: _class, ...plain } = request;
   const placed =
     request.target?.environmentId === undefined &&
@@ -191,6 +195,12 @@ const delegateNew = Effect.fn("AgentDelegation.delegateNew")(function* (
     scope.environmentId,
     placed && !light,
   );
+  if (named === undefined && (light || !placed))
+    yield* requireAllowed(
+      allowed,
+      scope.environmentId,
+      light ? LIGHT_STAY : "Automatic placement is off here.",
+    );
   if (!placed || Option.isNone(placement))
     return yield* withHold(
       yield* withProvider(service.delegateTask(scope, input), input.target?.providerInstanceId),
@@ -285,6 +295,7 @@ const place = Effect.fn("AgentDelegation.place")(function* (
       clientRequestId: exclude.length === 0 ? input.clientRequestId : undefined,
       ...(stayReason === undefined ? {} : { localOnlyReason: stayReason }),
       ...(spill ? { spill, exclude } : {}),
+      allowed: input.target?.allowedEnvironmentIds,
     });
     if (
       input.target?.repository !== undefined &&
@@ -293,7 +304,14 @@ const place = Effect.fn("AgentDelegation.place")(function* (
       return yield* withHold(
         yield* service.delegateTask(scope, yield* resolveRepository(input, scope.environmentId)),
       );
-    if (selected === undefined) return yield* withHold(yield* service.delegateTask(scope, input));
+    if (selected === undefined) {
+      yield* requireAllowed(
+        input.target?.allowedEnvironmentIds,
+        scope.environmentId,
+        "Automatic placement is off here.",
+      );
+      return yield* withHold(yield* service.delegateTask(scope, input));
+    }
     const there = selected.placement.environmentId;
     if (there !== scope.environmentId) yield* options.release;
     const attempt = yield* placement

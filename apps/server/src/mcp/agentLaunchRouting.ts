@@ -1,5 +1,5 @@
 import {
-  type EnvironmentId,
+  EnvironmentId,
   ModelSelection,
   ProjectId,
   OrchestratorMcpFailure,
@@ -7,6 +7,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type * as AgentPlacement from "../peer/AgentPlacement.ts";
+import { requireAllowed } from "../peer/PlacementAllowed.ts";
 import type * as Invocation from "./McpInvocationContext.ts";
 
 const LaunchInput = Schema.Struct({
@@ -15,6 +16,7 @@ const LaunchInput = Schema.Struct({
   scratch: Schema.optional(Schema.Boolean),
   modelSelection: Schema.optional(ModelSelection),
   clientRequestId: Schema.optional(Schema.String),
+  allowedEnvironmentIds: Schema.optional(Schema.Array(EnvironmentId)),
   attachments: Schema.optional(Schema.Array(Schema.Unknown)),
   workspaceStrategy: Schema.optional(
     Schema.Struct({
@@ -25,7 +27,37 @@ const LaunchInput = Schema.Struct({
   ),
 });
 
-const decodeInput = Schema.decodeUnknownEffect(LaunchInput);
+const decodeLaunch = Schema.decodeUnknownEffect(LaunchInput);
+const decodeInput = (params: object) =>
+  decodeLaunch(params).pipe(
+    Effect.mapError(
+      () =>
+        new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "Invalid launch parameters.",
+        }),
+    ),
+  );
+const withoutAllowed = (params: object) => {
+  const { allowedEnvironmentIds: _allowed, ...rest } = params as {
+    readonly allowedEnvironmentIds?: unknown;
+  };
+  return rest;
+};
+
+export const unplaced = Effect.fn("AgentLaunchRouting.unplaced")(function* (
+  scope: Invocation.McpInvocationScope,
+  environmentId: EnvironmentId | undefined,
+  params: object,
+) {
+  const input = yield* decodeInput(params);
+  yield* requireAllowed(
+    input.allowedEnvironmentIds,
+    environmentId ?? scope.environmentId,
+    environmentId === undefined ? "Automatic placement is off here." : undefined,
+  );
+  return withoutAllowed(params);
+});
 const sharedBase = (strategy: (typeof LaunchInput.Type)["workspaceStrategy"]) =>
   strategy?.type === "worktree" &&
   strategy.baseRef !== undefined &&
@@ -38,21 +70,15 @@ export const launch = Effect.fn("AgentLaunchRouting.launch")(function* <E, R>(
   params: object,
   run: (environmentId: EnvironmentId | undefined, params: object) => Effect.Effect<unknown, E, R>,
 ) {
-  const input = yield* decodeInput(params).pipe(
-    Effect.mapError(
-      () =>
-        new OrchestratorMcpFailure({
-          code: "invalid_request",
-          message: "Invalid launch parameters.",
-        }),
-    ),
-  );
+  const input = yield* decodeInput(params);
+  const plain = withoutAllowed(params);
   const selected = yield* service.select(scope, {
     operation: "launch",
     projectId: input.projectId,
     repository: input.repository,
     modelSelection: input.modelSelection,
     clientRequestId: input.clientRequestId,
+    allowed: input.allowedEnvironmentIds,
     ...(input.scratch === true
       ? { localOnlyReason: "Scratch work has no shared project to match." }
       : (input.attachments?.length ?? 0) > 0
@@ -63,21 +89,22 @@ export const launch = Effect.fn("AgentLaunchRouting.launch")(function* <E, R>(
           ? { localOnlyReason: "Worktree launches keep their local base references." }
           : {}),
   });
-  if (selected === undefined) return yield* run(undefined, params);
+  if (selected === undefined)
+    return yield* run(undefined, yield* unplaced(scope, undefined, params));
   const { result, placement } = yield* service.run(
     scope,
     selected,
     input.clientRequestId,
     (clientRequestId) =>
       run(selected.placement.environmentId, {
-        ...params,
+        ...plain,
         clientRequestId,
         ...(selected.projectId === undefined
           ? {}
           : { projectId: selected.projectId, repository: undefined }),
         modelSelection: selected.modelSelection,
       }),
-    run(undefined, params),
+    run(undefined, plain),
   );
   if (typeof result !== "object" || result === null) return result;
   if ("threadId" in result && typeof result.threadId === "string")

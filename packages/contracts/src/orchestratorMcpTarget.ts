@@ -66,3 +66,8 @@ export const OrchestratorMcpTarget = Schema.Struct({
   ),
 });
 export type OrchestratorMcpTarget = typeof OrchestratorMcpTarget.Type;
+
+export const OrchestratorMcpAllowedEnvironments = Schema.Array(EnvironmentId).annotate({
+  description:
+    "Machines this start may use; others are skipped and an `environmentId` outside them is refused. Omitted or empty: every linked machine.",
+});
