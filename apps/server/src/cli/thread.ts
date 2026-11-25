@@ -105,7 +105,7 @@ const threadStartCommand = Command.make("start", {
   ),
   machines: Flag.String("machines").pipe(
     Flag.withDescription(
-      "Comma-separated environment ids the thread may be placed on; include this machine's to let it stay. Without it, a start in the project folder stays here.",
+      "Comma-separated environment ids the thread may be placed on; include this machine's to let it stay.",
     ),
     Flag.optional,
   ),

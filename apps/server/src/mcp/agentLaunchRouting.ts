@@ -84,16 +84,11 @@ export const launch = Effect.fn("AgentLaunchRouting.launch")(function* <E, R>(
       ? { localOnlyReason: "Scratch work has no shared project to match." }
       : (input.attachments?.length ?? 0) > 0
         ? { localOnlyReason: "Pending attachments belong to this environment." }
-        : input.workspaceStrategy === undefined || input.workspaceStrategy.type === "root"
-          ? input.allowedEnvironmentIds === undefined
-            ? {
-                rootStayReason:
-                  "A root-folder start runs in this machine's checkout, so it stays here unless allowed machines are named.",
-              }
-            : {}
-          : !sharedBase(input.workspaceStrategy)
-            ? { localOnlyReason: "Worktree launches keep their local base references." }
-            : {}),
+        : input.workspaceStrategy !== undefined &&
+            input.workspaceStrategy.type !== "root" &&
+            !sharedBase(input.workspaceStrategy)
+          ? { localOnlyReason: "Worktree launches keep their local base references." }
+          : {}),
   });
   if (selected === undefined)
     return yield* run(undefined, yield* unplaced(scope, undefined, params));

@@ -69,5 +69,5 @@ export type OrchestratorMcpTarget = typeof OrchestratorMcpTarget.Type;
 
 export const OrchestratorMcpAllowedEnvironments = Schema.Array(EnvironmentId).annotate({
   description:
-    "Machines this start may use, at least one; others are skipped and an `environmentId` outside them is refused. List this machine to let the start stay here. A root-folder `t3_thread_launch` moves only when this is passed. Omitted: any machine.",
+    "Machines this start may use, at least one; others are skipped and an `environmentId` outside them is refused. List this machine to let the start stay here. Omitted: any machine.",
 });
