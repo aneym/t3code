@@ -263,6 +263,7 @@ import { planThreadDeletion } from "./ThreadDeletion.ts";
 import { taskCancelAdmission, taskCancelRefusal, taskCancelUpdate } from "./TaskCancel.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
+import { keepsThreadModelSelection } from "./runLocalModelSelection.ts";
 
 const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
@@ -2525,7 +2526,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : "Provider or model selection changed.";
       yield* writeSystemEvents(
         [
-          ...(selectionChanged
+          ...(selectionChanged && !keepsThreadModelSelection(queuedRun.userMessageId)
             ? [
                 {
                   type:
@@ -6165,8 +6166,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const activeProviderInstanceId = projection.providerThreads.find(
       (candidate) => candidate.id === projection.thread.activeProviderThreadId,
     )?.providerInstanceId;
-    // Another provider is handed what ran since it last saw the thread, which can be older than
-    // the compaction, so a provider switch reads the whole history.
     if (
       activeProviderInstanceId !== undefined &&
       activeProviderInstanceId !==
@@ -7223,8 +7222,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
     const now = yield* DateTime.now;
     if (
-      !modelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
-      projection.thread.providerInstanceId !== modelSelection.instanceId
+      !keepsThreadModelSelection(command.messageId) &&
+      (!modelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
+        projection.thread.providerInstanceId !== modelSelection.instanceId)
     ) {
       yield* emit(
         events,

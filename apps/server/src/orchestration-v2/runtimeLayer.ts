@@ -1,5 +1,6 @@
 import * as WorktreeBranchSync from "./WorktreeBranchSync.ts";
 import * as GuestShareService from "../guest/GuestShareService.ts";
+import * as UsageLimitFallbackWorker from "./UsageLimitFallbackWorker.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as AskOnlyForkArchiver from "./AskOnlyForkArchiver.ts";
 import * as BlockedQueueWakeWorker from "./BlockedQueueWakeWorker.ts";
@@ -466,6 +467,15 @@ export const layerProduction = Layer.mergeAll(
     Layer.provide(
       Layer.mergeAll(
         layerProjectionStore,
+        layerThreadManagementProvided,
+        layerOrchestratorProvided,
+      ),
+    ),
+  ),
+  UsageLimitFallbackWorker.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        ProjectionStore.layer,
         layerThreadManagementProvided,
         layerOrchestratorProvided,
       ),
