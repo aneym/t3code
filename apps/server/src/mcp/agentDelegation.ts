@@ -15,7 +15,7 @@ import {
 } from "../orchestration-v2/DelegatedChildClaims.ts";
 import * as Gate from "../orchestration-v2/DelegatedChildStartGate.ts";
 import * as AgentPlacement from "../peer/AgentPlacement.ts";
-import { requireAllowed } from "../peer/PlacementAllowed.ts";
+import { checkAllowed, requireAllowed } from "../peer/PlacementAllowed.ts";
 import * as PlacementRoom from "../peer/PlacementRoom.ts";
 import { SpillLaunch } from "../peer/PlacementSpill.ts";
 import * as WorktreeTransfer from "../peer/WorktreeTransfer.ts";
@@ -183,6 +183,7 @@ const delegateNew = Effect.fn("AgentDelegation.delegateNew")(function* (
   if (refusal !== undefined) return yield* repositoryFailure(refusal);
   const allowed = request.target?.allowedEnvironmentIds;
   const named = request.target?.environmentId;
+  yield* checkAllowed(scope.environmentId, allowed);
   if (named !== undefined) yield* requireAllowed(allowed, named);
   const { class: _class, ...plain } = request;
   const placed =
@@ -203,7 +204,10 @@ const delegateNew = Effect.fn("AgentDelegation.delegateNew")(function* (
     );
   if (!placed || Option.isNone(placement))
     return yield* withHold(
-      yield* withProvider(service.delegateTask(scope, input), input.target?.providerInstanceId),
+      yield* withProvider(
+        service.delegateTask(scope, withoutAllowed(input)),
+        input.target?.providerInstanceId,
+      ),
     );
   const caller = yield* readCaller();
   const inherited = caller.caller?.modelSelection;
@@ -269,6 +273,11 @@ const delegateNew = Effect.fn("AgentDelegation.delegateNew")(function* (
 const withProvider = <A, E, R>(effect: Effect.Effect<A, E, R>, instanceId: string | undefined) =>
   instanceId === undefined ? effect : Effect.provideService(effect, ChildProvider, { instanceId });
 
+const withoutAllowed = (input: OrchestratorMcpDelegateTaskInput) => {
+  if (input.target === undefined) return input;
+  const { allowedEnvironmentIds: _allowed, ...target } = input.target;
+  return { ...input, target };
+};
 const refused = (error: { readonly message: string }) => error.message.startsWith(SPILL_REFUSED);
 
 const place = Effect.fn("AgentDelegation.place")(function* (
@@ -327,9 +336,13 @@ const place = Effect.fn("AgentDelegation.place")(function* (
         input.clientRequestId,
         (clientRequestId) => {
           const sent = service.delegateTask(scope, {
-            ...input,
+            ...withoutAllowed(input),
             clientRequestId,
-            target: { ...input.target, environmentId: there, projectId: selected.projectId },
+            target: {
+              ...withoutAllowed(input).target,
+              environmentId: there,
+              projectId: selected.projectId,
+            },
           });
           return spill
             ? sent.pipe(Effect.provideService(SpillLaunch, { startOrRefuse: true }))

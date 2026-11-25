@@ -55,7 +55,7 @@ export const OrchestratorMcpTarget = Schema.Struct({
   projectId: Schema.optional(
     ProjectId.annotate({
       description:
-        "Project to run in, here or with `environmentId` there. Default: this thread's, or there the one with its repository.",
+        "Project whose repository the work belongs to; with no `environmentId`, placement may run it on a linked machine's project with the same repository. Default: this thread's.",
     }),
   ),
   repository: Schema.optional(
@@ -69,5 +69,5 @@ export type OrchestratorMcpTarget = typeof OrchestratorMcpTarget.Type;
 
 export const OrchestratorMcpAllowedEnvironments = Schema.Array(EnvironmentId).annotate({
   description:
-    "Machines this start may use; others are skipped and an `environmentId` outside them is refused. Omitted or empty: every linked machine.",
+    "Machines this start may use, at least one; others are skipped and an `environmentId` outside them is refused. List this machine to let the start stay here. A root-folder `t3_thread_launch` moves only when this is passed. Omitted: any machine.",
 });

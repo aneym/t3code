@@ -7,7 +7,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type * as AgentPlacement from "../peer/AgentPlacement.ts";
-import { requireAllowed } from "../peer/PlacementAllowed.ts";
+import { checkAllowed, requireAllowed } from "../peer/PlacementAllowed.ts";
 import type * as Invocation from "./McpInvocationContext.ts";
 
 const LaunchInput = Schema.Struct({
@@ -28,7 +28,7 @@ const LaunchInput = Schema.Struct({
 });
 
 const decodeLaunch = Schema.decodeUnknownEffect(LaunchInput);
-const decodeInput = (params: object) =>
+const decodeInput = (scope: Invocation.McpInvocationScope, params: object) =>
   decodeLaunch(params).pipe(
     Effect.mapError(
       () =>
@@ -37,6 +37,7 @@ const decodeInput = (params: object) =>
           message: "Invalid launch parameters.",
         }),
     ),
+    Effect.tap((input) => checkAllowed(scope.environmentId, input.allowedEnvironmentIds)),
   );
 const withoutAllowed = (params: object) => {
   const { allowedEnvironmentIds: _allowed, ...rest } = params as {
@@ -50,7 +51,7 @@ export const unplaced = Effect.fn("AgentLaunchRouting.unplaced")(function* (
   environmentId: EnvironmentId | undefined,
   params: object,
 ) {
-  const input = yield* decodeInput(params);
+  const input = yield* decodeInput(scope, params);
   yield* requireAllowed(
     input.allowedEnvironmentIds,
     environmentId ?? scope.environmentId,
@@ -70,7 +71,7 @@ export const launch = Effect.fn("AgentLaunchRouting.launch")(function* <E, R>(
   params: object,
   run: (environmentId: EnvironmentId | undefined, params: object) => Effect.Effect<unknown, E, R>,
 ) {
-  const input = yield* decodeInput(params);
+  const input = yield* decodeInput(scope, params);
   const plain = withoutAllowed(params);
   const selected = yield* service.select(scope, {
     operation: "launch",
@@ -83,11 +84,16 @@ export const launch = Effect.fn("AgentLaunchRouting.launch")(function* <E, R>(
       ? { localOnlyReason: "Scratch work has no shared project to match." }
       : (input.attachments?.length ?? 0) > 0
         ? { localOnlyReason: "Pending attachments belong to this environment." }
-        : input.workspaceStrategy !== undefined &&
-            input.workspaceStrategy.type !== "root" &&
-            !sharedBase(input.workspaceStrategy)
-          ? { localOnlyReason: "Worktree launches keep their local base references." }
-          : {}),
+        : input.workspaceStrategy === undefined || input.workspaceStrategy.type === "root"
+          ? input.allowedEnvironmentIds === undefined
+            ? {
+                localOnlyReason:
+                  "A root-folder start runs in this machine's checkout, so it stays here unless allowed machines are named.",
+              }
+            : {}
+          : !sharedBase(input.workspaceStrategy)
+            ? { localOnlyReason: "Worktree launches keep their local base references." }
+            : {}),
   });
   if (selected === undefined)
     return yield* run(undefined, yield* unplaced(scope, undefined, params));

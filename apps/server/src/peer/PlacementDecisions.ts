@@ -1,6 +1,7 @@
 import { AgentPlacementReceipt, ModelSelection, ProjectId } from "@t3tools/contracts";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -18,7 +19,11 @@ const Saved = Schema.Struct({ savedAt: Schema.Number, selection: Selection });
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const PRUNE_EVERY_MS = 5 * 60 * 1000;
 
+const encodeKey = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.String)));
+const encodeModel = Schema.encodeEffect(Schema.fromJsonString(ModelSelection));
+
 export const make = Effect.fn("PlacementDecisions.make")(function* (stateDir: string) {
+  const digests = yield* Digest.Digest;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
@@ -64,5 +69,27 @@ export const make = Effect.fn("PlacementDecisions.make")(function* (stateDir: st
       Effect.provideService(HostProcess.Platform, platform),
     );
 
-  return { load, save };
+  const keyOf = Effect.fn("PlacementDecisions.keyOf")(function* (parts: {
+    readonly principal: string;
+    readonly operation: string;
+    readonly clientRequestId: string;
+    readonly target: string;
+    readonly modelSelection: ModelSelection;
+    readonly driverKind: string | undefined;
+    readonly allowed: ReadonlyArray<string> | undefined;
+  }) {
+    const fields = [
+      parts.principal,
+      parts.operation,
+      parts.clientRequestId,
+      parts.target,
+      yield* encodeModel(parts.modelSelection),
+      parts.driverKind ?? "",
+    ];
+    const allowed = parts.allowed === undefined ? [] : ["allowed", ...[...parts.allowed].sort()];
+    const encoded = yield* encodeKey([...fields, ...allowed]);
+    return yield* digests.digestHex(Digest.sha256, new TextEncoder().encode(encoded));
+  });
+
+  return { load, save, keyOf };
 });

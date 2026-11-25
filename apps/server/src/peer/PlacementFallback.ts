@@ -1,4 +1,4 @@
-import type { AgentPlacementReceipt } from "@t3tools/contracts";
+import type { AgentPlacementReceipt, EnvironmentId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
@@ -31,6 +31,7 @@ export const make =
       now: number,
       placement: AgentPlacementReceipt,
     ) => Effect.Effect<void>;
+    readonly release: (environmentId: EnvironmentId, at: number) => void;
   }): Run =>
   (scope, selected, clientRequestId, there, here) =>
     Effect.gen(function* () {
@@ -41,6 +42,12 @@ export const make =
         Effect.catchIf(
           (error) => messageOf(error) === NO_ANSWER,
           () => attempt,
+        ),
+        Effect.tapError(() =>
+          Effect.sync(() => {
+            const { environmentId, decidedAt } = selected.placement;
+            if (decidedAt !== undefined) deps.release(environmentId, decidedAt);
+          }),
         ),
         Effect.map((result) => ({ result, placement: selected.placement })),
         Effect.catchIf(

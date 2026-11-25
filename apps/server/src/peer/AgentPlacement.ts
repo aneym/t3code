@@ -12,13 +12,11 @@ import {
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Context from "effect/Context";
-import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Threads from "../orchestration-v2/ThreadManagementService.ts";
 import * as Config from "../config.ts";
@@ -85,14 +83,11 @@ const make = Effect.gen(function* () {
   const peers = yield* Peers.PeerMcpClient;
   const links = yield* Links.PeerLinks;
   const config = yield* Config.ServerConfig;
-  const digests = yield* Digest.Digest;
   const threads = yield* Threads.ThreadManagementService;
   const lock = yield* KeyedLock.make<string>();
   const random = yield* SecureRandom.SecureRandom;
-  const encodeModel = Schema.encodeEffect(Schema.fromJsonString(ModelSelection));
   const { record, read } = yield* PlacementReceipts.make;
   const snapshots = yield* PlacementSnapshots.make(peers);
-  const encodeKey = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.String)));
   const decisions = yield* PlacementDecisions.make(config.stateDir);
   const claims = Claims.make();
   const serial = yield* Semaphore.make(1);
@@ -121,7 +116,10 @@ const make = Effect.gen(function* () {
         Effect.provideService(Threads.ThreadManagementService, threads),
       );
       const descriptor = yield* environment.getDescriptor;
-      const repository = current.agentPlacementByRoom ? input.repository : undefined;
+      const atStart = current.agentPlacementAtStart;
+      const roomOn = current.agentPlacementByRoom || atStart;
+      const claimHere = atStart && allowedSkip(input.allowed, scope.environmentId) === undefined;
+      const repository = roomOn ? input.repository : undefined;
       const projectId =
         repository === undefined
           ? (input.projectId ?? caller.caller?.projectId)
@@ -165,12 +163,13 @@ const make = Effect.gen(function* () {
       if ((origin !== undefined && linkOriginIsFenced(origin)) || scope.client?.linked === true)
         return local("Placement was resolved by the originating environment.");
       if (input.localOnlyReason !== undefined) {
-        claims.claim(
-          scope.environmentId,
-          yield* Room.localRoom,
-          false,
-          DateTime.toEpochMillis(yield* DateTime.now),
-        );
+        if (claimHere)
+          claims.claim(
+            scope.environmentId,
+            yield* Room.localRoom,
+            false,
+            DateTime.toEpochMillis(yield* DateTime.now),
+          );
         return local(input.localOnlyReason);
       }
       if ((projectId === undefined && repository === undefined) || modelSelection === undefined)
@@ -185,19 +184,17 @@ const make = Effect.gen(function* () {
       const digest =
         input.clientRequestId === undefined
           ? undefined
-          : yield* digests.digestHex(
-              Digest.sha256,
-              new TextEncoder().encode(
-                yield* encodeKey([
-                  requestPrincipal(scope),
-                  input.operation,
-                  input.clientRequestId,
-                  projectId ?? repository ?? "",
-                  yield* encodeModel(modelSelection).pipe(Effect.mapError(unavailable)),
-                  input.driverKind ?? "",
-                ]).pipe(Effect.mapError(unavailable)),
-              ),
-            );
+          : yield* decisions
+              .keyOf({
+                principal: requestPrincipal(scope),
+                operation: input.operation,
+                clientRequestId: input.clientRequestId,
+                target: projectId ?? repository ?? "",
+                modelSelection,
+                driverKind: input.driverKind,
+                allowed: input.allowed,
+              })
+              .pipe(Effect.mapError(unavailable));
       const keyed = (selection: PlacementDecisions.Selection): Selected =>
         digest === undefined ? selection : { ...selection, decisionKey: digest };
       const decide = Effect.gen(function* () {
@@ -250,7 +247,7 @@ const make = Effect.gen(function* () {
           return yield* Effect.gen(function* () {
             const scores: Array<AgentPlacementScore> = [];
             const matching = new Map<EnvironmentId, ProjectId>();
-            const byRoom = current.agentPlacementByRoom || current.agentPlacementAtStart || spill;
+            const byRoom = roomOn || spill;
             const readings = new Map<EnvironmentId, AgentPlacementRoom | undefined>();
             const localSkipped =
               allowedSkip(input.allowed, scope.environmentId) ??
@@ -262,6 +259,7 @@ const make = Effect.gen(function* () {
                 scope.environmentId,
                 { room: localRoom, resources: yield* resources.read },
                 now,
+                atStart,
               ),
               environmentId: scope.environmentId,
               label: descriptor.label,
@@ -292,6 +290,7 @@ const make = Effect.gen(function* () {
                   link.environmentId,
                   { room: reading, resources: snapshot?.hostResources },
                   scoredAt,
+                  atStart,
                 ),
                 environmentId: link.environmentId,
                 label: sources.label,
@@ -327,7 +326,8 @@ const make = Effect.gen(function* () {
             ): PlacementDecisions.Selection => {
               const chosen = scores.find((entry) => entry.environmentId === environmentId);
               const mapped = matching.get(environmentId) ?? projectId;
-              claims.claim(environmentId, readings.get(environmentId), hold !== undefined, now);
+              if (atStart || (byRoom && environmentId !== scope.environmentId))
+                claims.claim(environmentId, readings.get(environmentId), hold !== undefined, now);
               return {
                 ...(mapped === undefined ? {} : { projectId: mapped }),
                 modelSelection,
@@ -372,7 +372,8 @@ const make = Effect.gen(function* () {
             if (queued !== undefined)
               return decided(queued.environmentId, "auto", queued.reason, queued.hold);
             if (winner === undefined) {
-              claims.claim(scope.environmentId, readings.get(scope.environmentId), false, now);
+              if (claimHere)
+                claims.claim(scope.environmentId, readings.get(scope.environmentId), false, now);
               return local(
                 spill
                   ? "No other machine has room; holding here."
@@ -393,6 +394,11 @@ const make = Effect.gen(function* () {
           Effect.orElseSucceed(() =>
             local("Placement data is unavailable; using the local launch path."),
           ),
+        );
+        yield* requireAllowed(
+          input.allowed,
+          result.placement.environmentId,
+          result.placement.reason,
         );
         if (digest === undefined) return result;
         return yield* decisions.save(digest, now, result).pipe(
@@ -421,6 +427,7 @@ const make = Effect.gen(function* () {
     newKey: random.uuidV4().pipe(Effect.orDie),
     label: environment.getDescriptor.pipe(Effect.map((descriptor) => descriptor.label)),
     save: (key, now, placement) => decisions.save(key, now, { placement }).pipe(Effect.ignore),
+    release: claims.release,
   });
   return AgentPlacement.of({ enabled, select, run, record, read });
 });

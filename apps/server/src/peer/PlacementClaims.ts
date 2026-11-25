@@ -2,6 +2,7 @@ import type { AgentPlacementRoom, EnvironmentId, HostResourcesSnapshot } from "@
 
 const CATCH_UP_MS = 120_000;
 const LOAD_MS = 60_000;
+const MAX_MACHINES = 256;
 
 interface Pick {
   readonly at: number;
@@ -39,10 +40,13 @@ export const make = () => {
       readonly resources: HostResourcesSnapshot | null | undefined;
     },
     now: number,
+    withLoad: boolean,
   ) => {
     const { room, resources } = reading;
     const open = pending(environmentId, room, now);
-    const load = recent(environmentId, now).filter((pick) => now - pick.at < LOAD_MS).length;
+    const load = withLoad
+      ? recent(environmentId, now).filter((pick) => now - pick.at < LOAD_MS).length
+      : 0;
     if (open.length === 0 && load === 0) return reading;
     const held = open.filter((pick) => pick.held).length;
     const active = open.length - held;
@@ -57,7 +61,7 @@ export const make = () => {
               free: room.free === null ? null : Math.max(0, room.free - active),
             },
       resources:
-        resources == null || resources.loadAverage1m === undefined
+        load === 0 || resources == null || resources.loadAverage1m === undefined
           ? resources
           : { ...resources, loadAverage1m: resources.loadAverage1m + load },
     };
@@ -69,8 +73,17 @@ export const make = () => {
     now: number,
   ) => {
     const kept = recent(environmentId, now);
-    if (picks.size >= 256 && kept.length === 0) picks.clear();
+    if (picks.size >= MAX_MACHINES) for (const known of picks.keys()) recent(known, now);
+    if (picks.size >= MAX_MACHINES && kept.length === 0) return;
     picks.set(environmentId, [...kept, { at: now, held, seen: counted(room) }]);
   };
-  return { adjust, claim };
+  const release = (environmentId: EnvironmentId, at: number) => {
+    const kept = picks.get(environmentId) ?? [];
+    const index = kept.findLastIndex((pick) => pick.at === at);
+    if (index < 0) return;
+    const left = kept.filter((_, position) => position !== index);
+    if (left.length === 0) picks.delete(environmentId);
+    else picks.set(environmentId, left);
+  };
+  return { adjust, claim, release };
 };

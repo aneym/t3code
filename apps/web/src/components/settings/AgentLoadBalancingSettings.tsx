@@ -60,7 +60,7 @@ export function AgentLoadBalancingSettings({
       />
       <SettingsRow
         title="Place every start by room"
-        description="A launch or child that names a project here goes to the linked machine with its repository and the most room, not only when this one is full. Shared children stay with their parent."
+        description="Agent launches and worktree children go to the linked machine with their repository and the most room, not only when this one is full. Project-folder and shared starts stay here."
         serverScoped
         settingKeys={["agentPlacementAtStart"]}
         control={

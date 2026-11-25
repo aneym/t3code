@@ -105,7 +105,7 @@ const threadStartCommand = Command.make("start", {
   ),
   machines: Flag.String("machines").pipe(
     Flag.withDescription(
-      "Comma-separated environment ids the thread may be placed on. Defaults to every linked machine.",
+      "Comma-separated environment ids the thread may be placed on; include this machine's to let it stay. Without it, a start in the project folder stays here.",
     ),
     Flag.optional,
   ),
@@ -123,6 +123,16 @@ const threadStartCommand = Command.make("start", {
       const title = yield* decodeTitle(
         Option.getOrElse(flags.title, () => titleFromMessage(message)),
       ).pipe(Effect.mapError(() => new ThreadUsageError({ detail: "The title is empty." })));
+      const machines = Option.map(flags.machines, (value) =>
+        value
+          .split(",")
+          .map((id) => id.trim())
+          .filter((id) => id.length > 0),
+      );
+      if (Option.isSome(machines) && machines.value.length === 0)
+        return yield* new ThreadUsageError({
+          detail: "--machines is empty: name at least one environment id, or leave it out.",
+        });
       yield* withOwnerMcpTools(
         "thread",
         flags,
@@ -135,14 +145,7 @@ const threadStartCommand = Command.make("start", {
               title,
               message,
               ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
-              ...(Option.isSome(flags.machines)
-                ? {
-                    allowedEnvironmentIds: flags.machines.value
-                      .split(",")
-                      .map((id) => id.trim())
-                      .filter((id) => id.length > 0),
-                  }
-                : {}),
+              ...(Option.isSome(machines) ? { allowedEnvironmentIds: machines.value } : {}),
               ...(Option.isSome(flags.provider) && Option.isSome(flags.model)
                 ? {
                     modelSelection: {
