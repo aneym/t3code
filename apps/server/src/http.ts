@@ -64,6 +64,16 @@ const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inlin
 // Agent HTML can open without a click, so disallow blocking modals.
 const HTML_CONTENT_SECURITY_POLICY =
   "sandbox allow-scripts allow-forms allow-popups allow-downloads";
+const htmlContentSecurityPolicy = (doorOrigin: string | undefined): string => {
+  if (doorOrigin === undefined) return HTML_CONTENT_SECURITY_POLICY;
+  const url = URL.canParse(doorOrigin) ? new URL(doorOrigin) : null;
+  const page =
+    url !== null && url.origin === doorOrigin && /^https?:$/.test(url.protocol)
+      ? ` ${doorOrigin}`
+      : "";
+  const sources = `'self' data: blob:${page} https://one.rails.so`;
+  return `${HTML_CONTENT_SECURITY_POLICY}; img-src ${sources}; media-src ${sources}; connect-src ${sources}`;
+};
 
 // Proxies may strip disposition; force document-capable downloads to octet-stream.
 const DOWNLOAD_MIME_TYPE_PATTERN = /^[\w!#$&^.+-]+\/[\w!#$&^.+-]+$/;
@@ -98,6 +108,7 @@ export function assetResponseHeaders(
     readonly download?: boolean;
     readonly fileName?: string;
     readonly mimeType?: string;
+    readonly doorOrigin?: string | undefined;
   },
 ): Record<string, string> {
   const lowerPath = filePath.toLowerCase();
@@ -123,13 +134,13 @@ export function assetResponseHeaders(
                   ? "text/html; charset=utf-8"
                   : "application/pdf",
               ...(inlineMimeType.toLowerCase() === "text/html"
-                ? { "Content-Security-Policy": HTML_CONTENT_SECURITY_POLICY }
+                ? { "Content-Security-Policy": htmlContentSecurityPolicy(options?.doorOrigin) }
                 : {}),
             }
           : lowerPath.endsWith(".html") || lowerPath.endsWith(".htm")
             ? {
                 "Content-Type": "text/html; charset=utf-8",
-                "Content-Security-Policy": HTML_CONTENT_SECURITY_POLICY,
+                "Content-Security-Policy": htmlContentSecurityPolicy(options?.doorOrigin),
               }
             : {}),
     ...(!options?.download && lowerPath.endsWith(".svg")
@@ -168,6 +179,7 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
     readonly mimeType?: string;
     readonly file?: OpenMediaFile;
     readonly renderIntent?: "mcp-app";
+    readonly doorOrigin?: string | undefined;
   },
   rangeHeader?: string,
   ifRangeHeader?: string,
@@ -452,8 +464,9 @@ export const layerAssetRoute = HttpRouter.add(
         ),
       );
     }
+    const doorOrigin = url.value.searchParams.get("door") ?? undefined;
     return yield* assetFileResponse(
-      asset,
+      { ...asset, doorOrigin },
       request.method === "GET" ? request.headers.range : undefined,
       request.headers["if-range"],
       request.method === "HEAD" ? "HEAD" : "GET",

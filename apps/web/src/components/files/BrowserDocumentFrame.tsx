@@ -32,6 +32,7 @@ import {
   useState,
 } from "react";
 import { isElectron } from "~/env";
+import { inRailsDoor } from "~/embed/embedProtocol";
 import { FileSurfaceLoading } from "./fileSurfaceChrome";
 import type { PdfViewState } from "./PdfViewer";
 
@@ -186,7 +187,13 @@ export function HtmlRenderDocument(props: {
 }) {
   const theme = useHtmlRenderTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
-  const [src] = useState(() => `${props.src.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}`);
+  const [src] = useState(() => {
+    const page = props.src.split("#", 1)[0] ?? props.src;
+    const door = inRailsDoor()
+      ? `${page.includes("?") ? "&" : "?"}door=${encodeURIComponent(window.location.origin)}`
+      : "";
+    return `${page}${door}${htmlRenderThemeFragment(theme)}`;
+  });
   const [loaded, setLoaded] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const postTheme = () => {
