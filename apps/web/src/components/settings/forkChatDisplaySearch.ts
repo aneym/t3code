@@ -12,7 +12,7 @@ export const forkChatDisplaySearch: ReadonlyArray<SettingsSearchItem> = [
     title: "Keep replies visible",
     to: "/settings/chat",
     searchTerms: [
-      "first message opening line last line reply answer worked for fold collapse hidden tool call superseded steer",
+      "first message opening line last line every line inline link reply answer worked for fold collapse hidden tool call superseded steer",
     ],
   },
 ];

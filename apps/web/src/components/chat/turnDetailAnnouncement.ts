@@ -3,7 +3,7 @@ import * as DateTime from "effect/DateTime";
 
 import type { TimelineEntry, WorkLogEntry } from "../../session-logic";
 import { liveWorkEntryLabel, timelineEntryRunId } from "./MessagesTimeline.logic";
-import { timelineEntryStartsResponse } from "./openingReply";
+import { timelineEntryStartsResponse } from "./inlineReplies";
 import { markdownPlainText } from "./timelineMinimapItems";
 
 export interface TurnMessage {

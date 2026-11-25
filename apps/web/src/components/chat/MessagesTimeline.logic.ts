@@ -74,7 +74,7 @@ import {
   formatSearchToolLabel,
 } from "@t3tools/shared/toolActivity";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
-import * as Opening from "./openingReply";
+import * as Inline from "./inlineReplies";
 import * as Terminal from "./terminalReply";
 
 export function timelineEntryRunId(entry: TimelineEntry): RunId | null {
@@ -905,7 +905,7 @@ function responseBoundaryRunId(entry: TimelineEntry): RunId | null {
 
 // Group promptless restarts under the initiating prompt until settled.
 function lastResponseBoundaryIndex(timelineEntries: ReadonlyArray<TimelineEntry>): number {
-  return timelineEntries.findLastIndex(Opening.timelineEntryStartsResponse);
+  return timelineEntries.findLastIndex(Inline.timelineEntryStartsResponse);
 }
 
 function deriveActiveVisualResponseRunIds(input: {
@@ -992,7 +992,7 @@ function deriveTurnFolds(input: {
   const interruptedRunIds = new Set<RunId>();
   const promptIndexByRunId = new Map<RunId, number>();
   for (const [index, entry] of input.timelineEntries.entries()) {
-    if (Opening.timelineEntryStartsResponse(entry)) {
+    if (Inline.timelineEntryStartsResponse(entry)) {
       const runId = responseBoundaryRunId(entry);
       if (runId !== null && !promptIndexByRunId.has(runId)) promptIndexByRunId.set(runId, index);
     }
@@ -1010,24 +1010,18 @@ function deriveTurnFolds(input: {
     entries: Array<TimelineEntry>;
     terminalEntry: Extract<TimelineEntry, { kind: "message" }> | null;
     hasStreamingMessage: boolean;
-    // Entry timestamps omit startup and can collapse steered turns to an instant.
     startBoundary: string | null;
     anchorEntryId: string;
-    /**
-     * Each steer after the turn has produced output starts a new segment at
-     * this index into `entries`, so the steer sits between the work it split.
-     */
     steerSegments: Array<{ startIndex: number; steer: TimelineEntry }>;
   }
   const groupsByRunId = new Map<RunId, TurnGroup>();
   const runlessFailedKeys = new Set<RunId>();
 
-  // Key runless responses per prompt to prevent V2 runs unfolding imported turns.
   let runlessKey: RunId | null = null;
   let responseKey: RunId | null = null;
   let pendingBoundary: { createdAt: string; anchorEntryId: string } | null = null;
   for (const [index, entry] of input.timelineEntries.entries()) {
-    if (Opening.timelineEntryStartsResponse(entry)) {
+    if (Inline.timelineEntryStartsResponse(entry)) {
       const nextEntry = input.timelineEntries[index + 1];
       pendingBoundary = nextEntry
         ? { createdAt: entry.createdAt, anchorEntryId: nextEntry.id }
@@ -1037,11 +1031,10 @@ function deriveTurnFolds(input: {
       responseKey = boundaryRunId ?? runlessKey;
       continue;
     }
-    if (entry.kind === "message" && Opening.timelineEntryIsSteer(entry)) {
+    if (entry.kind === "message" && Inline.timelineEntryIsSteer(entry)) {
       const steerRunId = entry.message.runId ?? responseKey;
       const group = steerRunId === null ? undefined : groupsByRunId.get(steerRunId);
       if (group !== undefined && group.entries.length > 0) {
-        // Back-to-back steers split once, after the last of them.
         if (group.steerSegments.at(-1)?.startIndex === group.entries.length) {
           group.steerSegments.pop();
         }
@@ -1053,7 +1046,6 @@ function deriveTurnFolds(input: {
     if (!ownRunId) {
       continue;
     }
-    // Resumed subagents keep their position and fold with their original turn.
     const runId =
       responseKey !== null && (promptIndexByRunId.get(ownRunId) ?? -1) > index
         ? responseKey
@@ -1102,7 +1094,6 @@ function deriveTurnFolds(input: {
     const terminalEntryIndex = group.terminalEntry
       ? group.entries.findIndex((entry) => entry.id === group.terminalEntry?.id)
       : group.entries.length;
-    // Folded dividers lose their place in the turn, so only the latest stays visible.
     const visibleCompactionId = group.entries.findLast(timelineEntryIsCompaction)?.id;
     for (const [index, entry] of group.entries.entries()) {
       if (entry.id === group.terminalEntry?.id) {
@@ -1145,8 +1136,6 @@ function deriveTurnFolds(input: {
 
     const isLatestInterruptedTurn =
       input.latestRun?.runId === runId && input.latestRun.status === "interrupted";
-    // A turn cut short by a steer leaves trailing work entries behind its
-    // terminal message — take whichever ended last.
     const lastEntryEnd = timelineEntryEnd(lastEntry);
     const elapsedMs =
       input.latestRun?.runId === runId && input.latestRun.startedAt && input.latestRun.completedAt
@@ -1165,9 +1154,6 @@ function deriveTurnFolds(input: {
         ? `Worked for ${duration}`
         : "Worked";
 
-    // The top row keeps the whole turn's time, steers included. Work after a
-    // steer folds under its own row below that steer, keyed apart from the run
-    // so each segment opens on its own.
     const segmentHiddenIds = (entries: ReadonlyArray<TimelineEntry>) =>
       new Set(entries.flatMap((entry) => (hiddenEntryIds.has(entry.id) ? [entry.id] : [])));
     const firstSegment = group.entries.slice(0, group.steerSegments[0]?.startIndex);
@@ -1358,7 +1344,7 @@ function workShownAsFinalAnswerOnly(
       pendingApprovalRequestIds?.has(item.requestId) === true) ||
     work.questionAnswer !== undefined ||
     timelineEntryIsCompaction(entry) ||
-    Opening.timelineEntryStartsResponse(entry) ||
+    Inline.timelineEntryStartsResponse(entry) ||
     work.tone === "error" ||
     work.sourceActivityKind === "runtime.error" ||
     (work.itemType === "error" && work.toolLifecycleStatus !== "completed")
@@ -1374,7 +1360,7 @@ function deriveInFlightSteerAnswerIds(entries: ReadonlyArray<TimelineEntry>): Re
     const reply = entry.kind === "message" && entry.message.role === "assistant" ? entry : null;
     if (candidate !== null && reply !== null) ids.add(candidate);
     candidate = null;
-    if (Opening.timelineEntryIsSteer(entry)) {
+    if (Inline.timelineEntryIsSteer(entry)) {
       awaitingReply = true;
     } else if (entry.kind === "message" && entry.message.role === "user") {
       awaitingReply = false;
@@ -1430,7 +1416,7 @@ function timelineRowEntries(
     );
     const steerAnswerIds = deriveInFlightSteerAnswerIds(entries);
     const retainedReplyIds = retainedAssistantReplyEntryIds(entries);
-    const openingIds = Opening.replyIds(entries, input.keepOpeningReplyVisible);
+    const openingIds = Inline.replyIds(entries, input.keepOpeningReplyVisible);
     shown = entries.filter((entry, index) => {
       if (entry.kind !== "message") {
         return workShownAsFinalAnswerOnly(entry, input.pendingApprovalRequestIds);
@@ -1466,6 +1452,7 @@ function deriveTimelineTurnFolds(
     | "runningRunId"
     | "toolCallVisibility"
     | "revealedMessageId"
+    | "keepOpeningReplyVisible"
   >,
 ) {
   if (input.toolCallVisibility === "zen") return new Map<string, TurnFold>();
@@ -1477,15 +1464,25 @@ function deriveTimelineTurnFolds(
     unsettledRunId,
     isWorking: input.isWorking,
   });
-  return deriveTurnFolds({
+  const keep = input.keepOpeningReplyVisible;
+  const folds = deriveTurnFolds({
     timelineEntries,
-    terminalAssistantMessageIds: Terminal.terminalAssistantMessageIds(timelineEntries),
+    terminalAssistantMessageIds: Terminal.terminalAssistantMessageIds(
+      timelineEntries,
+      Terminal.blankReplyTargets(timelineEntries, keep),
+    ),
     latestRun: input.latestRun ?? null,
     unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
     runlessWorkActive: input.isWorking && input.runlessWorkActive === true,
     liveSubagentEntryIds: liveSubagentCardEntryIds(timelineEntries),
     retainedAssistantReplyEntryIds: retainedAssistantReplyEntryIds(timelineEntries),
   });
+  return Inline.splitTurnFolds(
+    folds,
+    Inline.replyIds(timelineEntries, keep),
+    timelineEntries,
+    keep,
+  );
 }
 
 export function deriveMessagesTimelineRows(input: {
@@ -1551,8 +1548,8 @@ export function deriveMessagesTimelineRows(input: {
   const itemizedRunIds = itemizedFailedRunIds(timelineEntries, failedRunIds);
   const liveSubagentEntryIds = liveSubagentCardEntryIds(timelineEntries);
   const retainedAssistantReplyIds = retainedAssistantReplyEntryIds(timelineEntries);
-  const openingIds = Opening.replyIds(input.timelineEntries, input.keepOpeningReplyVisible);
-  const supersededFoldsByAnchorEntryId = Opening.unfoldReplies(
+  const openingIds = Inline.replyIds(input.timelineEntries, input.keepOpeningReplyVisible);
+  const supersededFoldsByAnchorEntryId = Inline.unfoldReplies(
     deriveSupersededAttemptFolds(
       timelineEntries,
       failedRunIds,
@@ -1571,11 +1568,11 @@ export function deriveMessagesTimelineRows(input: {
     isWorking: input.isWorking,
   });
   const runlessWorkActive = input.isWorking && input.runlessWorkActive === true;
-  const foldsByAnchorEntryId = Opening.unfoldReplies(
+  const foldsByAnchorEntryId = Inline.splitTurnFolds(
     input.toolCallVisibility === "zen"
       ? new Map<string, TurnFold>()
       : deriveTurnFolds({
-          timelineEntries: timelineEntries,
+          timelineEntries,
           terminalAssistantMessageIds,
           latestRun: input.latestRun ?? null,
           unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
@@ -1585,6 +1582,7 @@ export function deriveMessagesTimelineRows(input: {
         }),
     openingIds,
     timelineEntries,
+    input.keepOpeningReplyVisible,
   );
   const timelineEntryById = new Map(timelineEntries.map((entry) => [entry.id, entry]));
   const collapsedEntryIds = new Set<string>();
@@ -2402,6 +2400,7 @@ export function timelineTurnFoldRunIdsByEntryId(
     | "runningRunId"
     | "toolCallVisibility"
     | "revealedMessageId"
+    | "keepOpeningReplyVisible"
   >,
 ): ReadonlyMap<string, RunId> {
   const byEntryId = new Map<string, RunId>();

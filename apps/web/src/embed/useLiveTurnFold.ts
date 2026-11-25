@@ -19,36 +19,17 @@ const asksPerson = (row: MessagesTimelineRow) =>
     (entry) => entry.projectedItem?.item.type === "approval_request",
   );
 
-function liveAnswerIndex(turn: ReadonlyArray<MessagesTimelineRow>, keepLast: boolean): number {
+function liveAnswerIndex(turn: ReadonlyArray<MessagesTimelineRow>): number {
   for (let index = turn.length - 1; index >= 0; index -= 1) {
     const row = turn[index]!;
-    if (STEPS.has(row.kind) && !keepLast) return -1;
-    if (row.kind !== "message" || row.message.role !== "assistant") continue;
-    if (!keepLast || row.message.text.trim() !== "") return index;
+    if (STEPS.has(row.kind)) return -1;
+    if (row.kind === "message" && row.message.role === "assistant") return index;
   }
   return -1;
 }
 
-const onlyThinking = (row: MessagesTimelineRow) =>
-  (row.kind === "work" ? row.groupedEntries : row.kind === "work-live" ? [row.entry] : []).every(
-    (entry) => entry.itemType === "reasoning",
-  ) && row.kind !== "work-toggle";
-
-function openingReplyRows(turn: ReadonlyArray<MessagesTimelineRow>): ReadonlySet<number> {
-  const kept = new Set<number>();
-  let open = true;
-  for (const [index, row] of turn.entries()) {
-    if (row.kind === "message" && row.message.role === "user") {
-      open = true;
-    } else if (STEPS.has(row.kind) && !onlyThinking(row)) {
-      open = false;
-    } else if (open && row.kind === "message" && row.message.role === "assistant") {
-      if (!row.message.streaming && row.message.text.trim() !== "") kept.add(index);
-      open = row.message.text.trim() === "";
-    }
-  }
-  return kept;
-}
+const says = (row: MessagesTimelineRow) =>
+  row.kind === "message" && row.message.role === "assistant" && row.message.text.trim() !== "";
 
 export function useLiveTurnFold(
   rows: MessagesTimelineRow[],
@@ -63,12 +44,11 @@ export function useLiveTurnFold(
   const working = rows[header];
   if (working?.kind === "working" && working.createdAt && working.createdAt === peeked) return rows;
   const turn = rows.slice(header + 1);
-  const answer = liveAnswerIndex(turn, keepOpening === true);
-  const opening = keepOpening ? openingReplyRows(turn) : new Set<number>();
+  const answer = liveAnswerIndex(turn);
   const kept = turn.filter(
     (row, index) =>
       index === answer ||
-      opening.has(index) ||
+      (keepOpening === true && says(row)) ||
       SHOWN.has(row.kind) ||
       asksPerson(row) ||
       (row.kind === "message" && (row.message.role === "user" || row.message.streaming)),

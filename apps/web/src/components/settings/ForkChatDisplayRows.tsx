@@ -50,7 +50,7 @@ export function ForkChatDisplayRows() {
       />
       <SettingsRow
         {...searchableSetting("keep-opening-reply-visible")}
-        description="Keep what an agent says before its first tool call, and its last line when a turn ends on a tool call, in the chat instead of folding it into Worked for or a superseded attempt."
+        description="Show every line an agent writes in the chat, in order, with the steps between lines in their own Worked for rows. Only a short opening line folds into the steps after it once the turn ends."
         resetAction={
           settings.keepOpeningReplyVisible !== DEFAULT_UNIFIED_SETTINGS.keepOpeningReplyVisible ? (
             <SettingResetButton
