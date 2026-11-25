@@ -179,7 +179,7 @@ const CHAT_SESSION_RPC = {
   [ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion]: inThread,
   [WS_METHODS.projectsMutate]: refuse,
   [WS_METHODS.agentsSubscribeHomes]: refuse,
-  [WS_METHODS.serverProbe]: refuse,
+  [WS_METHODS.serverProbe]: sessionBound,
   [WS_METHODS.serverGetConfig]: filtered,
   [WS_METHODS.serverGetNpmRelease]: refuse,
   [WS_METHODS.serverUpdateProvider]: refuse,
