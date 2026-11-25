@@ -67,6 +67,8 @@ it.effect(
             switch (tool) {
               case "t3_project_list":
                 return Effect.succeed({ structuredContent: { projects, nextCursor: null } });
+              case "t3_environment_links":
+                return Effect.succeed({ structuredContent: { environmentId: "here", links: [] } });
               case "t3_thread_launch":
                 return Effect.succeed({
                   structuredContent: { threadId, projectId: args.projectId, runId: null },
