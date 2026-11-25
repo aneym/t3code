@@ -1,6 +1,7 @@
 import type { AgentPlacementRoom, EnvironmentId, HostResourcesSnapshot } from "@t3tools/contracts";
 
 const CATCH_UP_MS = 120_000;
+const LOAD_MS = 60_000;
 
 interface Pick {
   readonly at: number;
@@ -41,7 +42,8 @@ export const make = () => {
   ) => {
     const { room, resources } = reading;
     const open = pending(environmentId, room, now);
-    if (open.length === 0) return reading;
+    const load = recent(environmentId, now).filter((pick) => now - pick.at < LOAD_MS).length;
+    if (open.length === 0 && load === 0) return reading;
     const held = open.filter((pick) => pick.held).length;
     const active = open.length - held;
     return {
@@ -57,7 +59,7 @@ export const make = () => {
       resources:
         resources == null || resources.loadAverage1m === undefined
           ? resources
-          : { ...resources, loadAverage1m: resources.loadAverage1m + open.length },
+          : { ...resources, loadAverage1m: resources.loadAverage1m + load },
     };
   };
   const claim = (

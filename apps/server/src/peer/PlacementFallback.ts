@@ -57,9 +57,10 @@ export const make =
                 decidedAt: now,
                 ...(chosen.scores === undefined ? {} : { scores: chosen.scores }),
               };
+              const result = yield* here;
               if (selected.decisionKey !== undefined)
                 yield* deps.save(selected.decisionKey, now, placement);
-              return { result: yield* here, placement };
+              return { result, placement };
             }),
         ),
       );

@@ -300,10 +300,16 @@ const place = Effect.fn("AgentDelegation.place")(function* (
     if (
       input.target?.repository !== undefined &&
       (selected === undefined || selected.projectId === undefined)
-    )
+    ) {
+      yield* requireAllowed(
+        input.target?.allowedEnvironmentIds,
+        scope.environmentId,
+        "No other allowed machine has a project for this repository.",
+      );
       return yield* withHold(
         yield* service.delegateTask(scope, yield* resolveRepository(input, scope.environmentId)),
       );
+    }
     if (selected === undefined) {
       yield* requireAllowed(
         input.target?.allowedEnvironmentIds,
@@ -329,7 +335,12 @@ const place = Effect.fn("AgentDelegation.place")(function* (
             ? sent.pipe(Effect.provideService(SpillLaunch, { startOrRefuse: true }))
             : sent;
         },
-        resolveRepository(input, scope.environmentId).pipe(
+        requireAllowed(
+          input.target?.allowedEnvironmentIds,
+          scope.environmentId,
+          `${selected.placement.label} was chosen and did not take it`,
+        ).pipe(
+          Effect.andThen(resolveRepository(input, scope.environmentId)),
           Effect.flatMap((fallback) => service.delegateTask(scope, fallback)),
         ),
       )

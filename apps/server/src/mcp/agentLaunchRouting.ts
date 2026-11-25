@@ -104,7 +104,11 @@ export const launch = Effect.fn("AgentLaunchRouting.launch")(function* <E, R>(
           : { projectId: selected.projectId, repository: undefined }),
         modelSelection: selected.modelSelection,
       }),
-    run(undefined, plain),
+    requireAllowed(
+      input.allowedEnvironmentIds,
+      scope.environmentId,
+      `${selected.placement.label} was chosen and did not take it`,
+    ).pipe(Effect.andThen(run(undefined, plain))),
   );
   if (typeof result !== "object" || result === null) return result;
   if ("threadId" in result && typeof result.threadId === "string")
