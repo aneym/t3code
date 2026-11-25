@@ -91,6 +91,7 @@ import type {
   Options as ReactMarkdownOptions,
 } from "react-markdown";
 import { createIncrementalMarkdownPlugin } from "../markdown-incremental";
+import { rehypeEmbedImageLinks } from "../embed/embedMarkdownImages";
 import type { Pluggable, PluggableList } from "unified";
 import { defaultUrlTransform } from "react-markdown";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
@@ -398,18 +399,16 @@ function normalizeMarkdownLinkHrefKey(href: string): string {
 }
 
 // Heading ids are added after sanitizing, which would prefix them a second time.
-const CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS = [
+const CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS: PluggableList = [
+  rehypeHeadingIds,
+  rehypeTextDirection,
+  rehypeChipPunctuation,
+  rehypeEmbedImageLinks,
+];
+const CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS: PluggableList = [
   ...CHAT_MARKDOWN_REHYPE_PLUGINS,
-  rehypeHeadingIds,
-  rehypeTextDirection,
-  rehypeChipPunctuation,
-] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
-
-const CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS = [
-  rehypeHeadingIds,
-  rehypeTextDirection,
-  rehypeChipPunctuation,
-] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+  ...CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS,
+];
 
 function markdownUrlTransform(href: string) {
   if (parseAssistantCitationHref(href)) return href;
