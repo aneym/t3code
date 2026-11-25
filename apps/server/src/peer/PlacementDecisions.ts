@@ -86,7 +86,8 @@ export const make = Effect.fn("PlacementDecisions.make")(function* (stateDir: st
       yield* encodeModel(parts.modelSelection),
       parts.driverKind ?? "",
     ];
-    const allowed = parts.allowed === undefined ? [] : ["allowed", ...[...parts.allowed].sort()];
+    const allowed =
+      parts.allowed === undefined ? [] : ["allowed", ...[...new Set(parts.allowed)].sort()];
     const encoded = yield* encodeKey([...fields, ...allowed]);
     return yield* digests.digestHex(Digest.sha256, new TextEncoder().encode(encoded));
   });

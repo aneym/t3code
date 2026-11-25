@@ -87,7 +87,7 @@ export const launch = Effect.fn("AgentLaunchRouting.launch")(function* <E, R>(
         : input.workspaceStrategy === undefined || input.workspaceStrategy.type === "root"
           ? input.allowedEnvironmentIds === undefined
             ? {
-                localOnlyReason:
+                rootStayReason:
                   "A root-folder start runs in this machine's checkout, so it stays here unless allowed machines are named.",
               }
             : {}
