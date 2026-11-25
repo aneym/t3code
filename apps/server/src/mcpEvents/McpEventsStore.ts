@@ -26,6 +26,7 @@ export interface SubscriptionRow {
   readonly last_delivery_at: string | null;
   readonly deliveries: number;
   readonly created_at: string;
+  readonly delivery_url: string | null;
 }
 
 const decodeServer = Schema.decodeUnknownSync(Schema.fromJsonString(McpEventsServer));
@@ -110,11 +111,12 @@ export const markSubscribed = Effect.fn("McpEventsStore.markSubscribed")(functio
   readonly remoteId: string | null;
   readonly refreshBefore: string | null;
   readonly subscribedAt: string;
+  readonly deliveryUrl: string;
 }) {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`UPDATE aneym_mcp_events_subscriptions
     SET status = 'active', remote_id = ${input.remoteId}, refresh_before = ${input.refreshBefore},
-      subscribed_at = ${input.subscribedAt}, last_error = NULL
+      subscribed_at = ${input.subscribedAt}, delivery_url = ${input.deliveryUrl}, last_error = NULL
     WHERE id = ${input.id}`;
 });
 

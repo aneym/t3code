@@ -183,7 +183,35 @@ const make = Effect.gen(function* () {
       remoteId: grant.id ?? null,
       refreshBefore: grant.refreshBefore ?? null,
       subscribedAt: DateTime.formatIso(yield* DateTime.now),
+      deliveryUrl: credential.url,
     });
+  });
+
+  const unsubscribeRemote = (row: Store.SubscriptionRow, url: string) => {
+    const subscription = Store.toSubscription(row);
+    return callEventsMethod(subscription.server, "events/unsubscribe", {
+      name: row.name,
+      arguments: subscription.arguments,
+      delivery: { mode: "webhook", url },
+    });
+  };
+
+  const dropReplaced = Effect.fn("McpEventsService.dropReplaced")(function* (
+    row: Store.SubscriptionRow,
+    base: string,
+  ) {
+    const url = row.delivery_url;
+    if (url !== null && url.startsWith(`${base}/${row.id}/`)) {
+      yield* unsubscribeRemote(row, url).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("MCP Events could not unsubscribe a replaced subscription", {
+            subscriptionId: row.id,
+            error: rpcMessage(error, { url, secret: "" }),
+          }),
+        ),
+      );
+    }
+    yield* Store.remove(row.id);
   });
 
   const subscribe = Effect.fn("McpEventsService.subscribe")(
@@ -212,10 +240,11 @@ const make = Effect.gen(function* () {
           ? Option.none<StoredCredential>()
           : yield* readCredential(existing.id);
       if (row === undefined || Option.isNone(credential)) {
-        if (row !== undefined) yield* Store.remove(row.id);
+        const base = yield* callbackBase;
+        if (row !== undefined) yield* dropReplaced(row, base);
         const id = `${HOOK_ID_PREFIX}${NodeCrypto.randomBytes(10).toString("hex")}`;
         const token = newUrlToken();
-        const fresh = { secret: newWebhookSecret(), url: `${yield* callbackBase}/${id}/${token}` };
+        const fresh = { secret: newWebhookSecret(), url: `${base}/${id}/${token}` };
         const encoded = yield* encodeCredential(fresh);
         yield* secrets.set(secretName(id), new TextEncoder().encode(encoded));
         yield* Store.insertPending({
@@ -281,14 +310,9 @@ const make = Effect.gen(function* () {
       const row = yield* Store.findById(subscriptionId);
       if (row === undefined) return { subscriptionId, removed: false, remote: "not_found" };
       const credential = yield* readCredential(row.id);
-      const subscription = Store.toSubscription(row);
       const remote = Option.isNone(credential)
         ? "skipped"
-        : yield* callEventsMethod(subscription.server, "events/unsubscribe", {
-            name: row.name,
-            arguments: subscription.arguments,
-            delivery: { mode: "webhook", url: credential.value.url },
-          }).pipe(
+        : yield* unsubscribeRemote(row, credential.value.url).pipe(
             Effect.as("ok"),
             Effect.catch((error) =>
               Effect.succeed(`failed: ${rpcMessage(error, credential.value)}`),
