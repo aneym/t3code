@@ -26,6 +26,7 @@ import {
 import { useAssetUrlState } from "../../assets/assetUrls";
 import { cn } from "~/lib/utils";
 import { TimelineRowCtx } from "./timelineRowContext";
+import { inRailsDoor } from "../../embed/embedProtocol";
 
 export const failedToolIconClassName = "text-tool-error-icon/40";
 
@@ -86,6 +87,9 @@ export function ToolActivityIconView(props: {
   const fallbackClassName = cn(props.className, props.muted && "opacity-70 light:brightness-60");
   if (!props.icon) {
     return <WorkEntryIcon name={props.fallbackName} className={fallbackClassName} />;
+  }
+  if (props.icon._tag === "website" && inRailsDoor()) {
+    return <WorkEntryIcon name="globe" className={fallbackClassName} />;
   }
   if (props.icon._tag === "website") {
     const src = toolActivityFaviconUrl(props.icon, resolvedTheme, 32);
