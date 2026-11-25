@@ -36,6 +36,8 @@ import { threadUpdateCommand } from "./threadUpdate.ts";
 import { resolveProject } from "./threadProject.ts";
 import { ThreadLaunchResult, onEnvironment, threadPlacementCommand } from "./threadPlacement.ts";
 
+const HereEnvironment = Schema.Struct({ environmentId: Schema.String });
+
 const launchWorkspaceStrategy = (input: {
   readonly worktree: Option.Option<string>;
   readonly branch: Option.Option<string>;
@@ -105,7 +107,7 @@ const threadStartCommand = Command.make("start", {
   ),
   machines: Flag.String("machines").pipe(
     Flag.withDescription(
-      "Comma-separated environment ids the thread may be placed on; include this machine's to let it stay.",
+      "Comma-separated environment ids the thread may be placed on; include this machine's to let it stay. Without it, the thread starts here.",
     ),
     Flag.optional,
   ),
@@ -138,6 +140,12 @@ const threadStartCommand = Command.make("start", {
         flags,
         Effect.fn("cli.thread.start")(function* (tools) {
           const project = yield* resolveProject(tools, flags.project);
+          const here = Option.isSome(machines)
+            ? undefined
+            : yield* tools.call("t3_environment_links", {}, HereEnvironment).pipe(
+                Effect.map((links) => links.environmentId),
+                Effect.orElseSucceed(() => undefined),
+              );
           const launched = yield* tools.call(
             "t3_thread_launch",
             {
@@ -146,6 +154,7 @@ const threadStartCommand = Command.make("start", {
               message,
               ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
               ...(Option.isSome(machines) ? { allowedEnvironmentIds: machines.value } : {}),
+              ...(here === undefined ? {} : { environmentId: here }),
               ...(Option.isSome(flags.provider) && Option.isSome(flags.model)
                 ? {
                     modelSelection: {
