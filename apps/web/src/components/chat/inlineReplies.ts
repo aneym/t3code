@@ -21,78 +21,17 @@ export function timelineEntryStartsResponse(entry: TimelineEntry): boolean {
   );
 }
 
-function entryStartsWork(entry: TimelineEntry): boolean {
-  if (entry.kind === "work") {
-    const { itemType, sourceActivityKind } = entry.entry;
-    return (
-      itemType !== "reasoning" &&
-      itemType !== "system_notice" &&
-      sourceActivityKind !== "context-compaction"
-    );
-  }
-  if (entry.kind === "event") return entry.projectedItem.item.type === "subagent";
-  return entry.kind !== "message";
-}
-
-const MARKS = ["http://", "https://", "www.", "](", "`", "**", "__", "~~", "|"];
-
-function leadIn(text: string): boolean {
-  const line = text.trim();
-  if (line.length >= 120 || line.includes("\n") || MARKS.some((mark) => line.includes(mark))) {
-    return false;
-  }
-  if (/^(?:[-*+>#]|\d+[.)])\s/.test(line)) return false;
-  return !/[.!?]\s/.test(line.slice(0, -1));
-}
-
 export function replyIds(
   entries: ReadonlyArray<TimelineEntry>,
   enabled: boolean | undefined,
 ): ReadonlySet<string> {
   if (enabled !== true) return NONE;
   const ids = new Set<string>();
-  let leadIns: string[] = [];
-  const settle = () => {
-    for (const id of leadIns) ids.add(id);
-    leadIns = [];
-  };
-  let runId: string | undefined;
-  let attemptId: string | undefined;
   for (const entry of entries) {
-    if (
-      (entry.kind === "message" && entry.message.role === "user") ||
-      timelineEntryStartsResponse(entry)
-    ) {
-      settle();
-      runId = undefined;
-      attemptId = undefined;
-      continue;
-    }
-    const entryRunId =
-      entry.kind === "message"
-        ? entry.message.runId
-        : entry.kind === "work"
-          ? entry.entry.runId
-          : null;
-    if (entryRunId != null && entryRunId !== runId) {
-      settle();
-      runId = entryRunId;
-      attemptId = undefined;
-    }
-    if (entry.attempt !== undefined && entry.attempt.id !== attemptId) {
-      if (attemptId !== undefined) settle();
-      attemptId = entry.attempt.id;
-    }
-    if (entry.kind === "message" && entry.message.role === "assistant") {
-      const { text } = entry.message;
-      if (entry.message.streaming || text.trim() === "") continue;
-      if (leadIn(text)) leadIns.push(entry.id);
-      else ids.add(entry.id);
-      continue;
-    }
-    if (entryStartsWork(entry)) leadIns = [];
+    if (entry.kind !== "message" || entry.message.role !== "assistant") continue;
+    if (entry.message.streaming || entry.message.text.trim() === "") continue;
+    ids.add(entry.id);
   }
-  settle();
   return ids;
 }
 
