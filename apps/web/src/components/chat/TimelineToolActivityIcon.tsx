@@ -88,8 +88,9 @@ export function ToolActivityIconView(props: {
   if (!props.icon) {
     return <WorkEntryIcon name={props.fallbackName} className={fallbackClassName} />;
   }
-  if (props.icon._tag === "website" && inRailsDoor()) {
-    return <WorkEntryIcon name="globe" className={fallbackClassName} />;
+  if (props.icon._tag !== "native-app" && inRailsDoor()) {
+    const name = props.icon._tag === "website" ? "globe" : props.fallbackName;
+    return <WorkEntryIcon name={name} className={fallbackClassName} />;
   }
   if (props.icon._tag === "website") {
     const src = toolActivityFaviconUrl(props.icon, resolvedTheme, 32);
