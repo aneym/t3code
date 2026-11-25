@@ -187,6 +187,13 @@ export function inEmbedPage(): boolean {
   return typeof window !== "undefined" && isEmbedPath(window.location.pathname);
 }
 
+export function inRailsDoor(): boolean {
+  return (
+    inEmbedPage() ||
+    (typeof window !== "undefined" && window.location.hostname.endsWith(".t3.rails.so"))
+  );
+}
+
 export function readEmbedScheme(value: unknown): EmbedScheme | null {
   return value === "light" || value === "dark" ? value : null;
 }

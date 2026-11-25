@@ -1,9 +1,8 @@
 import type { Element, ElementContent, Root } from "hast";
 
-import { inEmbedPage } from "./embedProtocol";
+import { inRailsDoor } from "./embedProtocol";
 
 const RAILS_ORIGIN = "https://one.rails.so";
-const DOOR_SUFFIX = ".t3.rails.so";
 const ID = "[A-Za-z0-9_-]";
 const RAILS_FILE_PATHS = [
   new RegExp(`^/api/agents/${ID}{1,64}/(?:files|chat-images)/${ID}{22}$`),
@@ -11,10 +10,6 @@ const RAILS_FILE_PATHS = [
   new RegExp(`^/x/${ID}{1,64}/(?:image|og\\.png|(?:asset|files)/${ID}{1,64})$`),
 ];
 const WEB_SOURCE = /^(?:https?:|\/\/)/i;
-
-const inRailsDoor = () =>
-  typeof window !== "undefined" &&
-  (inEmbedPage() || window.location.hostname.endsWith(DOOR_SUFFIX));
 
 function isRailsFileImage(raw: string): boolean {
   if (!URL.canParse(raw)) return false;
