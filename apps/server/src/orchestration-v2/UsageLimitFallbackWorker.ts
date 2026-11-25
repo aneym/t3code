@@ -125,7 +125,11 @@ const makeHandler = Effect.gen(function* () {
     const thread = records.thread;
     const original = records.messages.find((message) => message.id === run.userMessageId);
     if (thread.archivedAt != null || original === undefined || original.role !== "user") return;
-    const personChat = original.createdBy === "user" && original.senderThreadId === undefined;
+    const personChat =
+      original.createdBy !== "system" &&
+      original.senderThreadId === undefined &&
+      original.linkedSender === undefined &&
+      original.scheduledTaskId === undefined;
     const step = nextFallbackStep(chain, run, personChat);
     if (step === null) return;
     const storedAt = stepIndex(chain, thread);
