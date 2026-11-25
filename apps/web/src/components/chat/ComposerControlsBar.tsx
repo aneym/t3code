@@ -1,6 +1,6 @@
 import type { ChatComposerProps } from "./ChatComposer";
 import type { PromptUltrathink } from "./TraitsPicker";
-import type { ProviderInstanceEntry } from "../../providerInstances";
+import { composerPickerInstanceEntries, type ProviderInstanceEntry } from "../../providerInstances";
 import { type AppModelOption } from "../../modelSelection";
 import { CircleAlertIcon } from "lucide-react";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
@@ -207,7 +207,11 @@ export function ComposerControlsBar(props: {
       }
       lockedProvider={lockedProvider}
       lockedContinuationGroupKey={lockedContinuationGroupKey}
-      instanceEntries={providerInstanceEntries}
+      instanceEntries={composerPickerInstanceEntries(providerInstanceEntries, [
+        selectedInstanceId,
+        activeThreadModelSelection?.instanceId,
+        ...(multipleModelSelections ?? []).map((selection) => selection.instanceId),
+      ])}
       keybindings={keybindings}
       modelOptionsByInstance={modelOptionsByInstance}
       size={controlSize}

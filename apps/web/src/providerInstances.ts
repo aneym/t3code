@@ -35,6 +35,7 @@ export interface ProviderInstanceEntry {
   readonly acpRegistryIconUrl?: string | undefined;
   readonly continuationGroupKey?: string | undefined;
   readonly enabled: boolean;
+  readonly pickerHidden?: boolean | undefined;
   readonly installed: boolean;
   readonly status: ServerProviderState;
   readonly isDefault: boolean;
@@ -50,6 +51,16 @@ export function isProviderInstancePickerReady(entry: ProviderInstanceEntry): boo
 
 export function isProviderInstancePickerVisible(entry: ProviderInstanceEntry): boolean {
   return entry.enabled;
+}
+
+export function composerPickerInstanceEntries(
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+  keepInstanceIds: ReadonlyArray<ProviderInstanceId | undefined>,
+): ReadonlyArray<ProviderInstanceEntry> {
+  if (!entries.some((entry) => entry.pickerHidden === true)) return entries;
+  return entries.filter(
+    (entry) => entry.pickerHidden !== true || keepInstanceIds.includes(entry.instanceId),
+  );
 }
 
 export function deriveProviderInstanceEntries(
@@ -126,12 +137,16 @@ export function applyProviderInstanceSettings(
 }
 
 function applyProviderInstanceBranding(
-  entry: ProviderInstanceEntry,
+  snapshotEntry: ProviderInstanceEntry,
   settings: Pick<ServerSettings, "providerInstances">,
 ): ProviderInstanceEntry {
-  const explicitInstance = Object.hasOwn(settings.providerInstances, entry.instanceId)
-    ? settings.providerInstances[entry.instanceId]
+  const explicitInstance = Object.hasOwn(settings.providerInstances, snapshotEntry.instanceId)
+    ? settings.providerInstances[snapshotEntry.instanceId]
     : undefined;
+  const entry =
+    explicitInstance?.pickerHidden === true
+      ? { ...snapshotEntry, pickerHidden: true }
+      : snapshotEntry;
   if (entry.driverKind !== "acpRegistry" || explicitInstance === undefined) return entry;
   const config =
     explicitInstance.config !== null && typeof explicitInstance.config === "object"

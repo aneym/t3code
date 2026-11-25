@@ -354,7 +354,11 @@ export function buildModelOptions(
       !isProviderEnabledForProject(config, provider, projectId) ||
       !provider.installed ||
       provider.auth.status === "unauthenticated" ||
-      (provider.driver === "antigravity" && provider.availability === "unavailable")
+      (provider.driver === "antigravity" && provider.availability === "unavailable") ||
+      (!includeHidden &&
+        config?.settings?.providerInstances[provider.instanceId]?.pickerHidden === true &&
+        provider.instanceId !== providerInstanceId &&
+        provider.instanceId !== fallbackModelSelection?.instanceId)
     ) {
       continue;
     }
