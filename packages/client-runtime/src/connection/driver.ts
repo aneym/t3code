@@ -26,6 +26,7 @@ import {
   sendsTokenInClear,
   usableRoutes,
 } from "./routes.ts";
+import { fetchRemoteSessionState } from "../authorization/remote.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
@@ -214,6 +215,33 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const explainCookieRefusal = (
+    prepared: PreparedConnection,
+    failure: ConnectionTransientError,
+  ): Effect.Effect<never, ConnectionAttemptError> =>
+    fetchRemoteSessionState({
+      httpBaseUrl: prepared.httpBaseUrl,
+      timeoutMs: ROUTE_CHECK_TIMEOUT_MS,
+    }).pipe(
+      Effect.provideService(FetchHttpClient.RequestInit, { cache: "no-store" }),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.option,
+      Effect.flatMap((session) =>
+        Option.exists(session, (state) => !state.authenticated)
+          ? Effect.fail<ConnectionAttemptError>(
+              new ConnectionBlockedError({
+                reason: "authentication",
+                detail: `${prepared.label} no longer accepts this browser's session. Pair it again to reconnect.`,
+                hop: "server",
+                via: "direct",
+                httpStatus: 401,
+              }),
+            )
+          : Effect.fail(failure),
+      ),
+      Effect.withSpan("ConnectionDriver.explainCookieRefusal"),
+    );
+
   const connect = Effect.fn("ConnectionDriver.connect")(function* (
     entry: ConnectionCatalogEntry,
     reportProgress: (progress: ConnectionDriverProgress) => Effect.Effect<void>,
@@ -233,9 +261,23 @@ export const make = Effect.gen(function* () {
         yield* reportProgress({ stage: "preparing" });
         const prepared = yield* resolver.prepare(routeEntry(entry, route));
         yield* reportProgress({ stage: "opening", prepared });
-        const session = yield* sessions.connect(prepared);
-        yield* reportProgress({ stage: "synchronizing", prepared });
-        yield* session.ready;
+        const opened = sessions
+          .connect(prepared)
+          .pipe(
+            Effect.tap((session) =>
+              reportProgress({ stage: "synchronizing", prepared }).pipe(
+                Effect.andThen(session.ready),
+              ),
+            ),
+          );
+        const session = yield* prepared.target._tag === "PrimaryConnectionTarget" &&
+        prepared.httpAuthorization === null
+          ? opened.pipe(
+              Effect.catchTags({
+                ConnectionTransientError: (failure) => explainCookieRefusal(prepared, failure),
+              }),
+            )
+          : opened;
         // The server closes a socket when its session expires, unless the same key renewed it.
         if (prepared.httpAuthorization?._tag === "Dpop") {
           yield* remote

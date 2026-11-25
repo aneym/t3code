@@ -28,6 +28,7 @@ import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstall
 import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
 import { SnapShotCoordinator } from "../components/desktop/SnapShotCoordinator";
 import { DesktopAppActivationCoordinator } from "../components/desktop/DesktopAppActivationCoordinator";
+import { PrimarySessionGuard } from "../components/auth/PrimarySessionGuard";
 import { DesktopWebLinkCoordinator } from "../components/desktop/DesktopWebLinkCoordinator";
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
 import { ReopenClosedViewShortcut } from "../components/ReopenClosedViewShortcut";
@@ -188,6 +189,7 @@ function RootRouteBranch() {
   const appHosts = (
     <>
       {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
+      {primaryEnvironmentAuthenticated ? <PrimarySessionGuard /> : null}
       {primaryEnvironmentAuthenticated || localEnvironmentDisabled ? (
         <DesktopWebLinkCoordinator />
       ) : null}
