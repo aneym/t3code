@@ -18,6 +18,7 @@ export const CHAT_SESSION_METHODS: ReadonlySet<string> = new Set([
   O.subscribeThread,
   O.subscribeCommandOutput,
   O.subscribePromptSuggestion,
+  WS_METHODS.serverProbe,
   WS_METHODS.serverGetConfig,
   WS_METHODS.serverReportClientActivity,
   WS_METHODS.secretsAnswerRequest,
