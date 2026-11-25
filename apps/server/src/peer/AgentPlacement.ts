@@ -59,7 +59,6 @@ export class AgentPlacement extends Context.Service<
         readonly driverKind?: ProviderDriverKind | undefined;
         readonly clientRequestId?: string | undefined;
         readonly localOnlyReason?: string | undefined;
-        readonly rootStayReason?: string | undefined;
         readonly spill?: boolean | undefined;
         readonly exclude?: ReadonlyArray<EnvironmentId> | undefined;
         readonly allowed?: ReadonlyArray<EnvironmentId> | undefined;
@@ -163,8 +162,7 @@ const make = Effect.gen(function* () {
       const origin = callerLinkOrigin(caller);
       if ((origin !== undefined && linkOriginIsFenced(origin)) || scope.client?.linked === true)
         return local("Placement was resolved by the originating environment.");
-      const stayReason = input.localOnlyReason ?? (atStart ? input.rootStayReason : undefined);
-      if (stayReason !== undefined) {
+      if (input.localOnlyReason !== undefined) {
         if (claimHere)
           claims.claim(
             scope.environmentId,
@@ -172,7 +170,7 @@ const make = Effect.gen(function* () {
             false,
             DateTime.toEpochMillis(yield* DateTime.now),
           );
-        return local(stayReason);
+        return local(input.localOnlyReason);
       }
       if ((projectId === undefined && repository === undefined) || modelSelection === undefined)
         return local("No project or model to match across environments.");
