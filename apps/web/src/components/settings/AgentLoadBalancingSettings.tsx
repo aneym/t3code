@@ -59,6 +59,21 @@ export function AgentLoadBalancingSettings({
         }
       />
       <SettingsRow
+        title="Place every start by room"
+        description="Agent launches and worktree children go to the linked machine with their repository and the most room, not only when this one is full. Project-folder and shared starts stay here."
+        serverScoped
+        settingKeys={["agentPlacementAtStart"]}
+        control={
+          <ScopedSwitch
+            settingKeys={["agentPlacementAtStart"]}
+            checked={settings.agentPlacementAtStart}
+            disabled={!settings.agentLoadBalancingEnabled}
+            onCheckedChange={(checked) => update({ agentPlacementAtStart: Boolean(checked) })}
+            aria-label="Place every start on the machine with the most room"
+          />
+        }
+      />
+      <SettingsRow
         title="Send to another machine when full"
         description="When this machine has no free builder slot or is over its health line, a child that names no machine starts on a linked machine with room. Agent homes use the same folder there."
         serverScoped

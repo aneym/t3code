@@ -15,6 +15,7 @@ import {
 } from "../orchestration-v2/DelegatedChildClaims.ts";
 import * as Gate from "../orchestration-v2/DelegatedChildStartGate.ts";
 import * as AgentPlacement from "../peer/AgentPlacement.ts";
+import { checkAllowed, requireAllowed } from "../peer/PlacementAllowed.ts";
 import * as PlacementRoom from "../peer/PlacementRoom.ts";
 import { SpillLaunch } from "../peer/PlacementSpill.ts";
 import * as WorktreeTransfer from "../peer/WorktreeTransfer.ts";
@@ -180,6 +181,10 @@ const delegateNew = Effect.fn("AgentDelegation.delegateNew")(function* (
     (yield* gate.marksLight(parentThreadId));
   const refusal = light ? lightRefusal(request, scope.environmentId) : undefined;
   if (refusal !== undefined) return yield* repositoryFailure(refusal);
+  const allowed = request.target?.allowedEnvironmentIds;
+  const named = request.target?.environmentId;
+  yield* checkAllowed(scope.environmentId, allowed);
+  if (named !== undefined) yield* requireAllowed(allowed, named);
   const { class: _class, ...plain } = request;
   const placed =
     request.target?.environmentId === undefined &&
@@ -191,9 +196,18 @@ const delegateNew = Effect.fn("AgentDelegation.delegateNew")(function* (
     scope.environmentId,
     placed && !light,
   );
+  if (named === undefined && (light || !placed))
+    yield* requireAllowed(
+      allowed,
+      scope.environmentId,
+      light ? LIGHT_STAY : "Automatic placement is off here.",
+    );
   if (!placed || Option.isNone(placement))
     return yield* withHold(
-      yield* withProvider(service.delegateTask(scope, input), input.target?.providerInstanceId),
+      yield* withProvider(
+        service.delegateTask(scope, withoutAllowed(input)),
+        input.target?.providerInstanceId,
+      ),
     );
   const caller = yield* readCaller();
   const inherited = caller.caller?.modelSelection;
@@ -259,6 +273,11 @@ const delegateNew = Effect.fn("AgentDelegation.delegateNew")(function* (
 const withProvider = <A, E, R>(effect: Effect.Effect<A, E, R>, instanceId: string | undefined) =>
   instanceId === undefined ? effect : Effect.provideService(effect, ChildProvider, { instanceId });
 
+const withoutAllowed = (input: OrchestratorMcpDelegateTaskInput) => {
+  if (input.target === undefined) return input;
+  const { allowedEnvironmentIds: _allowed, ...target } = input.target;
+  return { ...input, target };
+};
 const refused = (error: { readonly message: string }) => error.message.startsWith(SPILL_REFUSED);
 
 const place = Effect.fn("AgentDelegation.place")(function* (
@@ -285,15 +304,29 @@ const place = Effect.fn("AgentDelegation.place")(function* (
       clientRequestId: exclude.length === 0 ? input.clientRequestId : undefined,
       ...(stayReason === undefined ? {} : { localOnlyReason: stayReason }),
       ...(spill ? { spill, exclude } : {}),
+      allowed: input.target?.allowedEnvironmentIds,
     });
     if (
       input.target?.repository !== undefined &&
       (selected === undefined || selected.projectId === undefined)
-    )
+    ) {
+      yield* requireAllowed(
+        input.target?.allowedEnvironmentIds,
+        scope.environmentId,
+        "No other allowed machine has a project for this repository.",
+      );
       return yield* withHold(
         yield* service.delegateTask(scope, yield* resolveRepository(input, scope.environmentId)),
       );
-    if (selected === undefined) return yield* withHold(yield* service.delegateTask(scope, input));
+    }
+    if (selected === undefined) {
+      yield* requireAllowed(
+        input.target?.allowedEnvironmentIds,
+        scope.environmentId,
+        "Automatic placement is off here.",
+      );
+      return yield* withHold(yield* service.delegateTask(scope, input));
+    }
     const there = selected.placement.environmentId;
     if (there !== scope.environmentId) yield* options.release;
     const attempt = yield* placement
@@ -303,15 +336,24 @@ const place = Effect.fn("AgentDelegation.place")(function* (
         input.clientRequestId,
         (clientRequestId) => {
           const sent = service.delegateTask(scope, {
-            ...input,
+            ...withoutAllowed(input),
             clientRequestId,
-            target: { ...input.target, environmentId: there, projectId: selected.projectId },
+            target: {
+              ...withoutAllowed(input).target,
+              environmentId: there,
+              projectId: selected.projectId,
+            },
           });
           return spill
             ? sent.pipe(Effect.provideService(SpillLaunch, { startOrRefuse: true }))
             : sent;
         },
-        resolveRepository(input, scope.environmentId).pipe(
+        requireAllowed(
+          input.target?.allowedEnvironmentIds,
+          scope.environmentId,
+          `${selected.placement.label} was chosen and did not take it`,
+        ).pipe(
+          Effect.andThen(resolveRepository(input, scope.environmentId)),
           Effect.flatMap((fallback) => service.delegateTask(scope, fallback)),
         ),
       )

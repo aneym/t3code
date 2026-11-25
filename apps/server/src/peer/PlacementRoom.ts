@@ -88,39 +88,6 @@ export const localProject = Effect.fn("PlacementRoom.localProject")(function* (
   return found.complete && found.matches.length === 1 ? found.matches[0]?.id : undefined;
 });
 
-export const makeClaims = () => {
-  const claims = new Map<
-    EnvironmentId,
-    { readonly expiresAt: number; active: number; held: number }
-  >();
-  const adjust = (
-    environmentId: EnvironmentId,
-    room: AgentPlacementRoom | undefined,
-    expiresAt: number | undefined,
-  ): AgentPlacementRoom | undefined => {
-    const claim = claims.get(environmentId);
-    if (room === undefined || claim === undefined || claim.expiresAt !== expiresAt) return room;
-    return {
-      ...room,
-      active: room.active + claim.active,
-      held: room.held + claim.held,
-      free: room.free === null ? null : Math.max(0, room.free - claim.active),
-    };
-  };
-  const claim = (environmentId: EnvironmentId, expiresAt: number | undefined, held: boolean) => {
-    if (expiresAt === undefined) return;
-    const current = claims.get(environmentId);
-    const next =
-      current !== undefined && current.expiresAt === expiresAt
-        ? current
-        : { expiresAt, active: 0, held: 0 };
-    if (held) next.held += 1;
-    else next.active += 1;
-    claims.set(environmentId, next);
-  };
-  return { adjust, claim };
-};
-
 const queueable = (score: AgentPlacementScore) =>
   score.room !== undefined &&
   score.room.paused === undefined &&
@@ -141,6 +108,7 @@ export const queuePick = (
   matching: ReadonlyMap<EnvironmentId, ProjectId>,
   now: number,
   maxHoldMinutes: number,
+  readings: ReadonlyMap<EnvironmentId, AgentPlacementRoom | undefined>,
 ) => {
   const chosen = scores
     .filter((score) => matching.has(score.environmentId) && queueable(score))
@@ -149,6 +117,14 @@ export const queuePick = (
         queueShare(left) - queueShare(right) || (right.room?.free ?? 0) - (left.room?.free ?? 0),
     )[0];
   if (chosen === undefined) return undefined;
+  const raw = readings.get(chosen.environmentId);
+  const reported = raw?.breach === undefined ? raw?.free : undefined;
+  if (reported != null && reported > 0)
+    return {
+      environmentId: chosen.environmentId,
+      reason: `Recent starts fill every machine; ${chosen.label} still reports ${reported} of ${raw?.cap} builder slots free, so it starts there.`,
+      hold: undefined,
+    };
   const position = (chosen.room?.held ?? 0) + 1;
   const hold: AgentPlacementHold = {
     reason: chosen.skipped ?? `Queued on ${chosen.label}.`,

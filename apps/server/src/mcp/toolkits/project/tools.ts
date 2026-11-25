@@ -2,6 +2,7 @@ import { McpAttachmentInput } from "../attachment/input.ts";
 import {
   AgentPlacementHold,
   AgentPlacementReceipt,
+  OrchestratorMcpAllowedEnvironments,
   OrchestratorMcpTarget,
   NonNegativeInt,
   ModelSelection,
@@ -138,6 +139,7 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     environmentId: OrchestratorMcpEnvironmentTarget,
     projectId: Schema.optional(ProjectId),
     repository: OrchestratorMcpTarget.fields.repository,
+    allowedEnvironmentIds: Schema.optional(OrchestratorMcpAllowedEnvironments),
     scratch: Schema.optional(
       Schema.Boolean.annotate({
         description:
