@@ -9,11 +9,6 @@ import { ATTACHMENT_UPLOAD_ROUTE_PREFIX } from "../assets/AttachmentUpload.ts";
 
 const MAX_GRANTS_PER_SET = 5_000;
 
-interface UrlGrant {
-  readonly setId: string;
-  readonly expiresAt: number;
-}
-
 export class ChatSessionGrants extends Context.Service<
   ChatSessionGrants,
   {
@@ -45,10 +40,10 @@ const grantKey = (pathname: string): string | null => {
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const urls = new Map<string, UrlGrant>();
+  const urls = new Map<string, Map<string, number>>();
   const uploads = new Map<string, Set<string>>();
   const startedAt = yield* Clock.currentTimeMillis;
-  yield* sql`DELETE FROM auth_chat_session_url_grants WHERE expires_at <= ${startedAt}`.pipe(
+  yield* sql`DELETE FROM auth_chat_session_set_url_grants WHERE expires_at <= ${startedAt}`.pipe(
     Effect.orDie,
   );
   const rows = yield* sql<{
@@ -57,14 +52,22 @@ const make = Effect.gen(function* () {
     readonly expiresAt: number;
   }>`
     SELECT grant_key AS "key", set_id AS "setId", expires_at AS "expiresAt"
-    FROM auth_chat_session_url_grants
+    FROM auth_chat_session_set_url_grants
   `.pipe(Effect.orDie);
-  for (const row of rows) urls.set(row.key, { setId: row.setId, expiresAt: row.expiresAt });
-
-  const live = (key: string | null, now: number) => {
-    const grant = key === null ? undefined : urls.get(key);
-    return grant !== undefined && grant.expiresAt > now ? grant : undefined;
+  const put = (key: string, setId: string, expiresAt: number) => {
+    let sets = urls.get(key);
+    if (sets === undefined) {
+      sets = new Map();
+      urls.set(key, sets);
+    }
+    sets.set(setId, expiresAt);
   };
+  for (const row of rows) put(row.key, row.setId, row.expiresAt);
+
+  const liveSets = (key: string | null, now: number) =>
+    [...((key === null ? undefined : urls.get(key)) ?? new Map<string, number>())]
+      .filter(([, expiresAt]) => expiresAt > now)
+      .map(([setId]) => setId);
 
   const record = Effect.fnUntraced(function* (
     setId: string,
@@ -75,19 +78,22 @@ const make = Effect.gen(function* () {
     if (key === null) return yield* Effect.die(new Error("A chat session URL has no grant key."));
     const now = yield* Clock.currentTimeMillis;
     let setGrants = 0;
-    for (const [entryKey, grant] of urls) {
-      if (grant.expiresAt <= now) urls.delete(entryKey);
-      else if (grant.setId === setId) setGrants += 1;
+    for (const [entryKey, sets] of urls) {
+      for (const [entrySet, entryExpiresAt] of sets) {
+        if (entryExpiresAt <= now) sets.delete(entrySet);
+        else if (entrySet === setId) setGrants += 1;
+      }
+      if (sets.size === 0) urls.delete(entryKey);
     }
     if (setGrants >= MAX_GRANTS_PER_SET) {
       return yield* Effect.die(new Error("A chat session holds too many live URLs."));
     }
-    urls.set(key, { setId, expiresAt });
+    put(key, setId, expiresAt);
     yield* sql`
-      INSERT OR REPLACE INTO auth_chat_session_url_grants (grant_key, set_id, expires_at)
+      INSERT OR REPLACE INTO auth_chat_session_set_url_grants (grant_key, set_id, expires_at)
       VALUES (${key}, ${setId}, ${expiresAt})
     `.pipe(Effect.orDie);
-    yield* sql`DELETE FROM auth_chat_session_url_grants WHERE expires_at <= ${now}`.pipe(
+    yield* sql`DELETE FROM auth_chat_session_set_url_grants WHERE expires_at <= ${now}`.pipe(
       Effect.orDie,
     );
   });
@@ -113,10 +119,10 @@ const make = Effect.gen(function* () {
       },
     ),
     allowsPath: Effect.fn("ChatSessionGrants.allowsPath")(function* (setId, pathname) {
-      return live(grantKey(pathname), yield* Clock.currentTimeMillis)?.setId === setId;
+      return liveSets(grantKey(pathname), yield* Clock.currentTimeMillis).includes(setId);
     }),
     isBound: Effect.fn("ChatSessionGrants.isBound")(function* (pathname) {
-      return live(grantKey(pathname), yield* Clock.currentTimeMillis) !== undefined;
+      return liveSets(grantKey(pathname), yield* Clock.currentTimeMillis).length > 0;
     }),
     ownsUpload: Effect.fn("ChatSessionGrants.ownsUpload")((setId, attachmentId) =>
       Effect.sync(() => uploads.get(setId)?.has(attachmentId) === true),
