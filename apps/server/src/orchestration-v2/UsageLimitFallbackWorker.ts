@@ -236,7 +236,7 @@ const makeHandler = Effect.gen(function* () {
       commandId: CommandId.make(`quota-fallback-resend:${run.id}`),
       messageId: MessageId.make(fallbackMessageId(run.id)),
       threadId: run.threadId,
-      text: `Ran on ${to.label}: ${reason}.\n\n${text}`,
+      text: `Fallback model (${to.label} — potential lower quality than ${from.label}): ${reason}.\n\n${text}`,
       attachments: original.attachments,
       ...(original.context === undefined ? {} : { context: original.context }),
       ...(original.senderThreadId === undefined ? {} : { senderThreadId: original.senderThreadId }),
