@@ -277,7 +277,8 @@ const ThreadSearchTool = Tool.make("t3_thread_search", {
   dependencies: [...commandTool.dependencies, ThreadSearch.ThreadSearch],
 })
   .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Meta, { "anthropic/alwaysLoad": true });
 
 const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
   ...commandTool,
