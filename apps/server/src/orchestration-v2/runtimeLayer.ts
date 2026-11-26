@@ -35,6 +35,7 @@ import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as HtmlRenderTimeline from "../htmlRender/HtmlRenderTimeline.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as PreparingRunSupervisor from "./PreparingRunSupervisor.ts";
@@ -107,6 +108,9 @@ const layerStores = Layer.mergeAll(
 );
 
 export const layerEventSink = EventSink.layerFromStores.pipe(Layer.provide(layerStores));
+export const layerHtmlRenderTimeline = HtmlRenderTimeline.layer.pipe(
+  Layer.provide(Layer.mergeAll(layerEventSink, layerProjectionStore, IdAllocator.layer)),
+);
 const layerProjectionMaintenanceProvided = ProjectionMaintenance.layer.pipe(
   Layer.provide(layerStores),
 );

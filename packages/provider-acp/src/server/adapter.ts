@@ -39,11 +39,7 @@ import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
-import {
-  compactDynamicToolOutput,
-  htmlRenderFromToolItem,
-  mcpToolResultOutput,
-} from "@t3tools/shared/toolOutput";
+import { acpMcpToolCallOutput, recoverAcpHtmlRender } from "./mcpToolCallOutput.ts";
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -1030,21 +1026,6 @@ function appendToolContentText(content: unknown, text: string): unknown[] {
     next.push({ type: "content", content: { type: "text", text } });
   }
   return next;
-}
-
-function acpMcpToolCallOutput(rawOutput: unknown): unknown {
-  const record = unknownRecord(rawOutput);
-  if (record === undefined) return rawOutput;
-  if (!("result" in record) && !("error" in record)) return rawOutput;
-  const result = unknownRecord(record.result);
-  const resultOutput = result === undefined ? undefined : mcpToolResultOutput(result);
-  const errorMessage = unknownRecord(record.error)?.message;
-  if (typeof errorMessage !== "string") {
-    return resultOutput ?? rawOutput;
-  }
-  return resultOutput === undefined
-    ? { error: errorMessage }
-    : { error: errorMessage, result: resultOutput };
 }
 
 function nonEmptyText(value: unknown, fallback: string): string {
@@ -4125,6 +4106,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           const status =
             projectedStatus ?? stoppedToolStatus(context, toolCall) ?? toolStatus(toolCall.status);
+          const mcpIdentity = extractMcpToolCallIdentity(toolCall, {
+            embeddedTerminalCommands: embeddedTerminalCommands(
+              context.nativeThreadId,
+              toolCall.toolCallId,
+            ),
+          });
+          const serverPublishesRender =
+            driver === "antigravity" &&
+            mcpIdentity?.server === "t3-code" &&
+            mcpIdentity.tool === HTML_RENDER_TOOL_NAME &&
+            (yield* mcpSessions.read(context.input.threadId)) !== undefined;
+          if (serverPublishesRender && status !== "failed") {
+            yield* rearmDeferredFinalize(context);
+            return;
+          }
           const now = yield* DateTime.now;
           const nativeItemId = `${context.nativeThreadId}:tool:${toolCall.toolCallId}`;
           const ordinal = yield* resolveItemOrdinal(context, nativeItemId);
@@ -4203,12 +4199,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             rawOutputRecord.type.trim().toLowerCase() === "bash" &&
             commandExitCode(rawOutput) !== undefined;
           const projectAsCommandExecution = inputVariant === "monitor" || outputIsBashResult;
-          const mcpIdentity = extractMcpToolCallIdentity(toolCall, {
-            embeddedTerminalCommands: embeddedTerminalCommands(
-              context.nativeThreadId,
-              toolCall.toolCallId,
-            ),
-          });
           let turnItem: OrchestrationV2TurnItem;
           if (toolCall.toolCallId.startsWith("acp-compaction:")) {
             const summary = textFromUnknown(rawOutput);
@@ -4241,39 +4231,22 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const input =
               mcpIdentity.input ?? unknownRecord(rawInputRecord?.arguments) ?? rawInputRecord ?? {};
             let output = rawOutput === undefined ? undefined : acpMcpToolCallOutput(rawOutput);
-            const isHtmlRender = resolveT3McpToolId(toolName) === HTML_RENDER_TOOL_NAME;
-            const isError =
-              compactDynamicToolOutput(output)?.isError === true ||
-              compactDynamicToolOutput(rawOutputRecord?.result)?.isError === true;
-            if (
-              isHtmlRender &&
-              (status === "failed" || (status === "completed" && isError)) &&
-              previous?.status !== "failed" &&
-              previous?.status !== "completed"
-            ) {
-              // A failed call may have published before the provider lost its result.
-              yield* mcpSessions.takeHtmlRender(
-                context.input.threadId,
-                input,
-                htmlRenderFromToolItem({ toolName, output }),
-              );
-            }
-            if (status === "completed" && isHtmlRender && !isError) {
-              const reportedPage = htmlRenderFromToolItem({ toolName, output });
-              // Antigravity replaces MCP results with summaries, including on repeated completions.
-              const previousPage = htmlRenderFromToolItem({
+            if (!serverPublishesRender && resolveT3McpToolId(toolName) === HTML_RENDER_TOOL_NAME) {
+              const recovered = yield* recoverAcpHtmlRender({
+                sessions: mcpSessions,
+                threadId: context.input.threadId,
                 toolName,
-                output: acpMcpToolCallOutput(previous?.data.rawOutput ?? previous?.data.content),
+                status,
+                input,
+                output,
+                rawResult: rawOutputRecord?.result,
+                previous,
               });
-              const page = reportedPage
-                ? yield* mcpSessions.takeHtmlRender(context.input.threadId, input, reportedPage)
-                : (previousPage ??
-                  (yield* mcpSessions.takeHtmlRender(context.input.threadId, input)));
-              if (reportedPage === undefined && page !== undefined) {
-                output = { htmlRender: page };
+              if (recovered !== undefined) {
+                output = recovered;
                 context.tools.set(toolCall.toolCallId, {
                   ...toolCall,
-                  data: { ...toolCall.data, rawOutput: output },
+                  data: { ...toolCall.data, rawOutput: recovered },
                 });
               }
             }
