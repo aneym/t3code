@@ -15,7 +15,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as ServerConfig from "../config.ts";
-import { isPoolExhaustedText, poolResetAt } from "../provider/poolExhaustion.ts";
+import { poolFailureDetail, poolResetAt } from "../provider/poolExhaustion.ts";
 import { probePoolHeadroom } from "../provider/poolHeadroom.ts";
 import { ProviderInstanceRegistry } from "../provider/ProviderInstanceRegistry.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -61,7 +61,13 @@ function runOutage(runId: OrchestrationV2Run["id"], items: Items, nowMs: number)
     const { failure } = item;
     const resetsAt =
       failure.resetAt ?? poolResetAt(`${failure.message}\n${failure.code ?? ""}`, nowMs);
-    if (isPoolExhaustedText(`${failure.message}\n${failure.code ?? ""}`)) {
+    if (
+      poolFailureDetail(
+        `${failure.message}\n${failure.code ?? ""}`,
+        failure.code === "api_error_503" ? 503 : null,
+        nowMs,
+      ) !== undefined
+    ) {
       return { reason: "no_accounts", resetsAt };
     }
     if (failure.class === "usage_limit") return { reason: "limit", resetsAt };

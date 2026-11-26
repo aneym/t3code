@@ -1,6 +1,6 @@
 import { pipe } from "effect/Function";
 import { codexAppServerDeadline } from "./CodexAppServerDeadline.ts";
-import { isPoolExhaustedText } from "../../provider/poolExhaustion.ts";
+import { poolFailureDetail } from "../../provider/poolExhaustion.ts";
 import {
   codexItemStatus,
   codexMcpAppResourceUri,
@@ -1167,7 +1167,7 @@ function failureResetAt(
   // Sharing caps have no reset timestamp in the ordinary Codex allowance snapshot.
   return classifyCodexManagedError(failure.code)?.usageLimit
     ? null
-    : codexUsageLimitResetAt(snapshot);
+    : (failure.resetAt ?? codexUsageLimitResetAt(snapshot));
 }
 
 interface ActiveCodexTurnContext {
@@ -5020,24 +5020,33 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return;
             }
             const notificationCode = codexErrorInfoCode(payload.error.codexErrorInfo);
+            const updatedAt = yield* DateTime.now;
+            const additionalDetails = payload.error.additionalDetails?.trim();
+            const pool = poolFailureDetail(
+              [payload.error.message, additionalDetails].filter(Boolean).join("\n"),
+              codexErrorHttpStatus(payload.error.codexErrorInfo),
+              DateTime.toEpochMillis(updatedAt),
+            );
             if (!payload.willRetry) {
               context.latestProviderFailure = {
                 nativeMessage: payload.error.message,
                 nativeCode: notificationCode,
                 failure: withCodexManagedFailure(
                   makeProviderFailure({
-                    message: payload.error.additionalDetails?.trim() || payload.error.message,
+                    message: pool?.message ?? (additionalDetails || payload.error.message),
                     code: notificationCode,
-                    class: codexUsageLimitError(notificationCode, payload.error.codexErrorInfo)
-                      ? "usage_limit"
-                      : "provider_error",
+                    class:
+                      pool !== undefined ||
+                      codexUsageLimitError(notificationCode, payload.error.codexErrorInfo)
+                        ? "usage_limit"
+                        : "provider_error",
+                    resetAt: pool?.resetAt ?? null,
                   }),
                   payload.error,
                 ),
               };
               return;
             }
-            const updatedAt = yield* DateTime.now;
             const previous = (yield* Ref.get(providerRetries)).get(context.providerTurnId);
             const progress = parseCodexRetryProgress(payload.error.message);
             const retry: OrchestrationV2ProviderRetry = {
@@ -5047,25 +5056,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               retryDelayMs: null,
             };
             const code = codexErrorInfoCode(payload.error.codexErrorInfo);
-            const additionalDetails = payload.error.additionalDetails?.trim();
-            const poolExhausted = isPoolExhaustedText(
-              `${payload.error.message}\n${additionalDetails ?? ""}`,
-            );
             const failure = withCodexManagedFailure(
               makeProviderFailure({
-                message:
-                  additionalDetails === undefined || additionalDetails.length === 0
-                    ? payload.error.message
-                    : additionalDetails,
+                message: pool?.message ?? (additionalDetails || payload.error.message),
                 code,
                 class:
-                  poolExhausted || codexUsageLimitError(code, payload.error.codexErrorInfo)
+                  pool !== undefined || codexUsageLimitError(code, payload.error.codexErrorInfo)
                     ? "usage_limit"
                     : code?.startsWith("http") === true ||
                         code?.startsWith("responseStream") === true
                       ? "transport_error"
                       : "provider_error",
                 retryable: true,
+                resetAt: pool?.resetAt ?? null,
               }),
               payload.error,
             );
@@ -5088,7 +5091,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             });
             yield* failStalledProviderRetry(context, state, payload.error.codexErrorInfo).pipe(
               Effect.delay(
-                poolExhausted ? CODEX_POOL_EXHAUSTED_GRACE : CODEX_PROVIDER_RETRY_STALL_TIMEOUT,
+                pool !== undefined
+                  ? CODEX_POOL_EXHAUSTED_GRACE
+                  : CODEX_PROVIDER_RETRY_STALL_TIMEOUT,
               ),
               Effect.forkIn(scope, { startImmediately: true }),
             );
@@ -6170,9 +6175,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 input.failureErrorInfo === undefined
                   ? undefined
                   : codexErrorInfoCode(input.failureErrorInfo);
-              const failureClass = codexUsageLimitError(failureCode ?? null, input.failureErrorInfo)
-                ? "usage_limit"
-                : "provider_error";
+              const now = yield* DateTime.now;
+              const pool = poolFailureDetail(
+                input.failureMessage ?? "",
+                codexErrorHttpStatus(input.failureErrorInfo),
+                DateTime.toEpochMillis(now),
+              );
+              const failureClass =
+                pool !== undefined ||
+                codexUsageLimitError(failureCode ?? null, input.failureErrorInfo)
+                  ? "usage_limit"
+                  : "provider_error";
               // The notification carries the richer message, so it wins when the
               // completion repeats it. An explicit exhaustion status on the
               // completion still decides the class; a missing one is not evidence.
@@ -6186,9 +6199,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ? previousFailure.failure
                   : withCodexManagedFailure(
                       makeProviderFailure({
-                        message: input.failureMessage,
+                        message: pool?.message ?? input.failureMessage,
                         code: failureCode,
                         class: failureClass,
+                        resetAt: pool?.resetAt ?? null,
                       }),
                       input.failureMessage,
                     );
