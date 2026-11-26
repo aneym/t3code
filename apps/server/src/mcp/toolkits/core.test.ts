@@ -119,6 +119,49 @@ const client = McpSchema.McpServerClient.of({
   getClient: Effect.die("unused"),
 });
 
+it.effect("queue promotion refuses an over-escaped thread ID without retargeting", () => {
+  const targetId = ThreadId.make(
+    "thread:delegated-task:command%3Amcp%3Acaller%3Adelegate-task%3Achild",
+  );
+  const targetShell = McpToolAccessTestkit.liveThreadShell(targetId);
+  const callerShell = McpToolAccessTestkit.liveThreadShell(threadId);
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const result = yield* server
+      .callTool({
+        name: "t3_queue",
+        arguments: {
+          action: "promote_to_steer",
+          threadId: targetId.replace("%3Adelegate-task%3A", "%253Adelegate-task%253A"),
+          queuedRunId: `run:thread:${encodeURIComponent(targetId)}:ordinal:2`,
+          targetRunId: `run:thread:${encodeURIComponent(targetId)}:ordinal:1`,
+          atBoundary: true,
+        },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(declaredFailure(result)).toMatchObject({
+      code: "thread_not_found",
+      message: expect.stringContaining("Pass the IDs unchanged."),
+    });
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkit.pipe(
+        Layer.provideMerge(McpTransport.layerInProcessMcpServer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) =>
+              Effect.succeed(id === targetId ? targetShell : id === threadId ? callerShell : null),
+          }),
+        ),
+      ),
+    ),
+  );
+});
+
 it.effect("an answered question reports already answered instead of not found", () => {
   const shell = McpToolAccessTestkit.liveThreadShell(threadId);
   const requestId = RuntimeRequestId.make("answered-question");

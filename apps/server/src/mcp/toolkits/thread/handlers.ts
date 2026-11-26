@@ -310,7 +310,16 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               queuedRunId: runId,
               targetRunId,
               ...(input.atBoundary === true ? { atBoundary: true } : {}),
-            }));
+            })).pipe(
+              Effect.mapError((error) =>
+                error.code === "thread_not_found"
+                  ? new OrchestratorMcpFailure({
+                      code: error.code,
+                      message: `${error.message} On the same environment, copy thread.threadId and thread.activeRunId from t3_thread_read and queuedRunId from t3_queue(list). Pass the IDs unchanged.`,
+                    })
+                  : error,
+              ),
+            );
           }
           default:
             return yield* dispatch(input.threadId, (common) => ({

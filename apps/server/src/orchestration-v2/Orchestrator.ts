@@ -10609,6 +10609,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
 
+    const target = projection.runs.find((run) => run.id === command.targetRunId);
+    if (target === undefined || !isActiveRun(target)) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause:
+          target === undefined
+            ? `Target run ${command.targetRunId} was not found. Copy the active run ID from the same thread without changing it.`
+            : `Target run ${target.id} is ${target.status} and cannot be steered.`,
+      });
+    }
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
     const parsedGoalCommand = parseGoalCommand(queuedMessage);
@@ -10617,15 +10628,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (yield* goalDriverFor(command, queuedRun.providerInstanceId)) === undefined
         ? null
         : parsedGoalCommand;
-    const target = projection.runs.find((run) => run.id === command.targetRunId);
     const targetMessage = projection.messages.find(
-      (message) => message.id === target?.userMessageId,
+      (message) => message.id === target.userMessageId,
     );
-    if (
-      target !== undefined &&
-      targetMessage !== undefined &&
-      isCompactionCommandMessage(targetMessage)
-    ) {
+    if (targetMessage !== undefined && isCompactionCommandMessage(targetMessage)) {
       if (goalCommand !== null) {
         yield* ensureGoalCommandSupported(command, queuedMessage, queuedRun.providerInstanceId);
       }
@@ -10661,7 +10667,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (goalCommand !== null) {
       yield* ensureGoalCommandSupported(command, queuedMessage, queuedRun.providerInstanceId);
       const goal = projection.providerThreads.find(
-        (candidate) => candidate.id === target?.providerThreadId,
+        (candidate) => candidate.id === target.providerThreadId,
       )?.goal;
       yield* emitEvent({
         type: "run.updated",
@@ -10673,7 +10679,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: { ...queuedRun, queuePosition: 1 },
       });
       const stops =
-        target !== undefined &&
         isLiveRun(target) &&
         goalCommandStopsActiveRun(goalCommand, goal?.status ?? null) &&
         (targetMessage === undefined || !isNativeMaintenanceCommand(targetMessage)) &&
@@ -10690,12 +10695,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     if (
-      (target?.status === "preparing" ||
-        target?.status === "starting" ||
-        (target?.status === "running" &&
-          !projection.providerTurns.some(
+      (target.status === "preparing" ||
+        target.status === "starting" ||
+        (target.status === "running" &&
+          (!projection.providerTurns.some(
             (turn) => turn.runAttemptId === target.activeAttemptId && turn.status === "running",
-          ))) &&
+          ) ||
+            (yield* runIsCompacting(projectionStore, command.threadId, target.id, projection))))) &&
       !(yield* stopReachedRun(command, command.threadId, target.id))
     ) {
       yield* ensureSteeringMessage(command, queuedMessage);
@@ -10711,6 +10717,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           capabilities,
         })
         .pipe(mapDispatchError(command));
+      const modeLimit = yield* DispatchModeLimit;
       yield* emitEvent({
         type: "run.updated",
         threadId: command.threadId,
@@ -10721,7 +10728,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: {
           ...queuedRun,
           steerWhenReadyRunId: target.id,
-          ...(command.atBoundary ? { steerWhenReadyAtBoundary: true } : {}),
+          steerWhenReadyAtBoundary: command.atBoundary === true,
+          steerWhenReadyModeLimit:
+            modeLimit === undefined
+              ? undefined
+              : { runtimeMode: modeLimit.runtimeMode, interactionMode: modeLimit.interactionMode },
         },
       });
       return;
@@ -14883,65 +14894,81 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.forkScoped,
     );
 
-  yield* eventSink
-    .stream({ afterSequence: terminalEventsAfterSequence, eventType: "provider-turn.updated" })
-    .pipe(
-      Stream.filter(
-        (stored) =>
-          stored.event.type === "provider-turn.updated" &&
-          stored.event.payload.status === "running",
-      ),
-      Stream.runForEach(
-        Effect.fn("Orchestrator.deliverDeferredSteers")(
-          function* (stored) {
-            if (stored.event.type !== "provider-turn.updated") return;
-            const threadId = stored.event.threadId;
-            const turn = stored.event.payload;
-            const projection = yield* projectionStore.getThreadRecords(threadId, ["runs"], {
-              runStatuses: ["queued", "running"],
-            });
-            const run = projection.runs.find(
-              (candidate) =>
-                candidate.activeAttemptId === turn.runAttemptId && candidate.status === "running",
-            );
-            if (run === undefined) return;
-            const pending = projection.runs
-              .filter(
-                (queued) => queued.status === "queued" && queued.steerWhenReadyRunId === run.id,
-              )
-              .toSorted(
-                (left, right) =>
-                  (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal),
-              );
-            for (const queued of pending) {
-              yield* dispatchWithReceiptEffect({
-                type: "queued-message.promote-to-steer",
-                commandId: CommandId.make(
-                  `command:deferred-steer:${queued.id}:${run.id}:${turn.runAttemptId}`,
-                ),
-                threadId,
-                queuedRunId: queued.id,
-                targetRunId: run.id,
-                ...(queued.steerWhenReadyAtBoundary ? { atBoundary: true } : {}),
-              }).pipe(
-                Effect.catchCause((cause) =>
-                  Effect.logWarning("Failed to deliver a deferred steer", {
-                    threadId,
-                    runId: queued.id,
-                    cause,
-                  }),
-                ),
-              );
-            }
-          },
-          (effect, stored) => threadDispatch.withLock(stored.event.threadId, effect),
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Failed to deliver deferred steering", { cause }),
-          ),
+  yield* Stream.merge(
+    eventSink
+      .stream({ afterSequence: terminalEventsAfterSequence, eventType: "provider-turn.updated" })
+      .pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "provider-turn.updated" &&
+            stored.event.payload.status === "running",
         ),
       ),
-      Effect.forkScoped,
-    );
+    eventSink
+      .stream({ afterSequence: terminalEventsAfterSequence, eventType: "turn-item.updated" })
+      .pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "turn-item.updated" &&
+            stored.event.payload.type === "compaction" &&
+            stored.event.payload.completedAt !== null &&
+            stored.event.payload.runId !== null,
+        ),
+      ),
+  ).pipe(
+    Stream.runForEach(
+      Effect.fn("Orchestrator.deliverDeferredSteers")(
+        function* (stored) {
+          const { event } = stored;
+          if (event.type !== "provider-turn.updated" && event.type !== "turn-item.updated") return;
+          const threadId = event.threadId;
+          const projection = yield* projectionStore.getThreadRecords(threadId, ["runs"], {
+            runStatuses: ["queued", "running"],
+          });
+          const run = projection.runs.find(
+            (candidate) =>
+              candidate.status === "running" &&
+              (event.type === "provider-turn.updated"
+                ? candidate.activeAttemptId === event.payload.runAttemptId
+                : candidate.id === event.payload.runId),
+          );
+          if (run === undefined) return;
+          const pending = projection.runs
+            .filter((queued) => queued.status === "queued" && queued.steerWhenReadyRunId === run.id)
+            .toSorted(
+              (left, right) =>
+                (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal),
+            );
+          if (pending.length === 0 || (yield* runIsCompacting(projectionStore, threadId, run.id)))
+            return;
+          for (const queued of pending) {
+            yield* dispatchWithReceiptEffect({
+              type: "queued-message.promote-to-steer",
+              commandId: CommandId.make(`command:deferred-steer:${queued.id}:${stored.sequence}`),
+              threadId,
+              queuedRunId: queued.id,
+              targetRunId: run.id,
+              ...(queued.steerWhenReadyAtBoundary ? { atBoundary: true } : {}),
+            }).pipe(
+              Effect.provideService(DispatchModeLimit, queued.steerWhenReadyModeLimit),
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Failed to deliver a deferred steer", {
+                  threadId,
+                  runId: queued.id,
+                  cause,
+                }),
+              ),
+            );
+          }
+        },
+        (effect, stored) => threadDispatch.withLock(stored.event.threadId, effect),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Failed to deliver deferred steering", { cause }),
+        ),
+      ),
+    ),
+    Effect.forkScoped,
+  );
 
   yield* eventSink
     .stream({ afterSequence: terminalEventsAfterSequence, eventType: "turn-item.updated" })

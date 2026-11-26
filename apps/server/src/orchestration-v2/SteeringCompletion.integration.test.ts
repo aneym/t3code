@@ -11,6 +11,7 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   ProviderTurnId,
+  RunId,
   ThreadId,
   TurnItemId,
   type ModelSelection,
@@ -24,6 +25,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { DispatchModeLimit } from "./DispatchModeLimit.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
@@ -879,17 +881,26 @@ it.effect("sends a selected held message once and preserves the remaining queue 
   }),
 );
 
-it.effect.each(
-  (["preparing", "starting", "running"] as const).flatMap((status) =>
+it.effect.each([
+  ...(["preparing", "starting", "running"] as const).flatMap((status) =>
     [false, true].map((direct) => ({ status, direct })),
   ),
-)("delivers a deferred steer for a $status run (direct: $direct)", ({ status, direct }) =>
+  { status: "compacting", direct: false },
+  { status: "ending during compaction", direct: false },
+] as const)("handles a deferred steer for a $status run (direct: $direct)", ({ status, direct }) =>
   Effect.gen(function* () {
     const restarting = status === "starting" && !direct;
+    const ending = status === "ending during compaction";
+    const compacting = status === "compacting" || ending;
+    const deliveredBoundaries: Array<boolean | undefined> = [];
     const { started, steered, layer, startFirstTurn, events } = yield* nextTurnSelectionHarness(
       `deferred-steer-${status}-${direct}`,
       restarting,
       !restarting,
+      undefined,
+      undefined,
+      undefined,
+      (turn) => Effect.sync(() => void deliveredBoundaries.push(turn.atBoundary)),
     );
     yield* Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -899,23 +910,52 @@ it.effect.each(
       const run = before.runs[0]!;
       const turn = before.providerTurns[0]!;
       const now = yield* DateTime.now;
-      yield* (yield* EventSink.EventSinkV2).write({
-        events: [
-          {
-            id: EventId.make("setup-run"),
-            type: "run.updated",
-            threadId,
-            occurredAt: now,
-            payload: { ...run, status },
-          },
-          {
-            id: EventId.make("setup-turn"),
-            type: "provider-turn.updated",
-            threadId,
-            occurredAt: now,
-            payload: { ...turn, status: "pending" },
-          },
-        ],
+      const sink = yield* EventSink.EventSinkV2;
+      const compaction = {
+        id: TurnItemId.make("auto-compaction"),
+        threadId,
+        runId: run.id,
+        nodeId: run.rootNodeId!,
+        providerThreadId: turn.providerThreadId,
+        providerTurnId: turn.id,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 100,
+        status: "running" as const,
+        title: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+        type: "compaction" as const,
+        driver,
+      };
+      yield* sink.write({
+        events: compacting
+          ? [
+              {
+                id: EventId.make("compaction-started"),
+                type: "turn-item.updated",
+                threadId,
+                occurredAt: now,
+                payload: compaction,
+              },
+            ]
+          : [
+              {
+                id: EventId.make("setup-run"),
+                type: "run.updated",
+                threadId,
+                occurredAt: now,
+                payload: { ...run, status: compacting ? run.status : status },
+              },
+              {
+                id: EventId.make("setup-turn"),
+                type: "provider-turn.updated",
+                threadId,
+                occurredAt: now,
+                payload: { ...turn, status: "pending" },
+              },
+            ],
       });
       if (status === "preparing" && !direct) {
         yield* orchestrator.dispatch({
@@ -1003,7 +1043,75 @@ it.effect.each(
         threadId,
         queuedRunId: queued.id,
         targetRunId: run.id,
+        ...(compacting ? { atBoundary: true } : {}),
       };
+      if (compacting) {
+        for (const targetRunId of [queued.id, RunId.make("run:another-thread")]) {
+          const refused = yield* orchestrator
+            .dispatch({
+              ...command,
+              commandId: CommandId.make(`invalid-target:${targetRunId}`),
+              targetRunId,
+            })
+            .pipe(Effect.flip);
+          assert.equal(refused._tag, "OrchestratorDispatchError");
+        }
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+            (candidate) => candidate.id === queued.id,
+          )?.status,
+          "queued",
+        );
+      }
+      let restrictedQueuedId: RunId | undefined;
+      if (compacting && !ending) {
+        yield* orchestrator.dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make("lower-runtime-mode"),
+          threadId,
+          runtimeMode: "approval-required",
+        });
+        const messageId = MessageId.make("message:restricted");
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("restricted-message"),
+          threadId,
+          messageId,
+          text: "only steer in approval mode",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        restrictedQueuedId = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (candidate) => candidate.userMessageId === messageId,
+        )!.id;
+        yield* orchestrator.dispatch({
+          type: "queued-run.reorder",
+          commandId: CommandId.make("prioritize-restricted-message"),
+          threadId,
+          runId: restrictedQueuedId,
+          beforeRunId: queued.id,
+        });
+        yield* orchestrator
+          .dispatch({
+            ...command,
+            commandId: CommandId.make("promote-restricted-message"),
+            queuedRunId: restrictedQueuedId,
+          })
+          .pipe(
+            Effect.provideService(DispatchModeLimit, {
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+            }),
+          );
+        yield* orchestrator.dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make("raise-runtime-mode"),
+          threadId,
+          runtimeMode: "full-access",
+        });
+      }
       if (!direct) {
         yield* orchestrator.dispatch(command);
         yield* orchestrator.dispatch(command);
@@ -1059,24 +1167,72 @@ it.effect.each(
           (event) =>
             event.type === "run.updated" &&
             event.payload.id === queued.id &&
-            event.payload.status === "cancelled",
+            event.payload.status === (ending ? "running" : "cancelled"),
         ),
         Stream.take(1),
         Stream.runDrain,
         Effect.forkScoped,
       );
-      yield* (yield* EventSink.EventSinkV2).write({
-        events: [
-          {
-            id: EventId.make("ready-run"),
-            type: "run.updated",
-            threadId,
-            occurredAt: now,
-            payload: run,
-          },
-        ],
-      });
-      yield* Queue.offer(events, { type: "provider_turn.updated", driver, providerTurn: turn });
+      if (ending) {
+        const terminal = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "run.updated" &&
+              event.payload.id === run.id &&
+              event.payload.status === "waiting",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* Queue.offer(events, {
+          type: "provider_turn.updated",
+          driver,
+          providerTurn: { ...turn, status: "completed", completedAt: now },
+        });
+        yield* Queue.offer(events, {
+          type: "turn.terminal",
+          driver,
+          providerThreadId: turn.providerThreadId,
+          providerTurnId: turn.id,
+          runOrdinal: run.ordinal,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        yield* Fiber.join(terminal);
+        yield* worker.drain();
+        yield* orchestrator.resumeQueuedRuns;
+        yield* worker.drain();
+      }
+      if (compacting) {
+        for (const eventId of ["compaction-ended", "compaction-ended-again"]) {
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(eventId),
+                type: "turn-item.updated",
+                threadId,
+                occurredAt: now,
+                payload: { ...compaction, status: "completed", completedAt: now },
+              },
+            ],
+          });
+        }
+      } else {
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("ready-run"),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: run,
+            },
+          ],
+        });
+        yield* Queue.offer(events, { type: "provider_turn.updated", driver, providerTurn: turn });
+      }
       yield* Fiber.join(promoted);
       if (restarting) yield* Fiber.join(secondReDeferred);
       yield* worker.drain();
@@ -1087,16 +1243,32 @@ it.effect.each(
           started.map((turn) => turn.message.text),
           ["first", "steer after setup", "second steer"],
         );
+      } else if (ending) {
+        assert.deepEqual(steered, []);
+        assert.deepEqual(
+          started.map(({ message }) => message.text),
+          ["first", "steer after setup"],
+        );
       } else {
         assert.deepEqual(steered, ["steer after setup"]);
         assert.lengthOf(started, 1);
+        if (compacting) assert.deepEqual(deliveredBoundaries, [true]);
       }
       const after = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(
         after.messages.find((message) => message.id === queued.userMessageId)?.runId,
-        run.id,
+        ending ? queued.id : run.id,
       );
-      assert.equal(after.runs.find((candidate) => candidate.id === run.id)?.status, "running");
+      assert.equal(
+        after.runs.find((candidate) => candidate.id === (ending ? queued.id : run.id))?.status,
+        "running",
+      );
+      if (restrictedQueuedId !== undefined) {
+        assert.equal(
+          after.runs.find((candidate) => candidate.id === restrictedQueuedId)?.status,
+          "queued",
+        );
+      }
     }).pipe(Effect.provide(layer));
   }),
 );
