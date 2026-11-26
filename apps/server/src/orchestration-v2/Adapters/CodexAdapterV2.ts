@@ -142,11 +142,8 @@ import {
   type ProviderAdapterDriverCreateInput,
 } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
-import {
-  currentEnvironmentId,
-  railsAgentIdOfCwd,
-  withT3ThreadEnvironment,
-} from "./T3ThreadEnvironment.ts";
+import { currentEnvironmentId, withT3SharedProcessEnvironment } from "./T3ThreadEnvironment.ts";
+import { codexThreadEnvironment } from "./CodexThreadEnvironment.ts";
 import { backgroundWorkNotification } from "@t3tools/provider-core/server/notification";
 import {
   makeProviderFailure,
@@ -168,7 +165,6 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 
 const CODEX_PROVIDER = ProviderDriverKind.make("codex");
 const CODEX_CAPACITY_MAX_RETRIES = 5;
-// Codex can announce a retry and never resume. Recovered retries resume model output within ~75s.
 const CODEX_PROVIDER_RETRY_STALL_TIMEOUT = "10 minutes";
 export const CODEX_DRIVER_KIND = CODEX_PROVIDER;
 export const CODEX_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CODEX_DRIVER_KIND);
@@ -199,13 +195,11 @@ function codexFileChangeApprovalPrompt(input: {
 }
 
 export function normalizeCodexThreadLoadModelSelection(selection: ModelSelection): ModelSelection {
-  // Codex applies effort on turn/start; resume discards its pinned request effort.
   const { options, ...rest } = selection;
   const loadOptions = options?.filter((option) => option.id !== "reasoningEffort");
   return { ...rest, ...(loadOptions?.length ? { options: loadOptions } : {}) };
 }
 
-// Reasoning-effort changes preserve the tokenizer and context window; other changes need fresh telemetry.
 export function canReuseCodexContextUsage(previous: ModelSelection, next: ModelSelection): boolean {
   return modelSelectionsEqual(
     {
@@ -231,7 +225,6 @@ export function codexProviderTurnTokenUsage(
   };
 }
 const CODEX_ASSISTANT_DELTA_FLUSH_INTERVAL_MS = 50;
-// Plan flushes store three copies; use the client's assistant-text cadence.
 const CODEX_PLAN_DELTA_FLUSH_INTERVAL_MS = 400;
 const CodexBackgroundTerminalTerminateResponse = Schema.Struct({
   terminated: Schema.Boolean,
@@ -372,8 +365,6 @@ const CODEX_THREAD_IN_USE_MESSAGE =
 
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
 
-// Codex holds a per-thread writer lock for as long as a thread stays loaded in
-// any app-server sharing the same CODEX_HOME, and reports a conflict this way.
 function isCodexActiveWriterError(error: unknown): boolean {
   return (
     isCodexAppServerRequestError(error) &&
@@ -446,7 +437,6 @@ function codexBackgroundCommandDetail(item: {
   readonly exitCode?: number | null | undefined;
   readonly aggregatedOutput?: string | null | undefined;
 }): string {
-  // Codex rejects a turn/start with a lone surrogate and never answers it, so cut on code points.
   let commandEnd = BACKGROUND_COMMAND_DETAIL_COMMAND_MAX_LENGTH;
   const finalCommandUnit = item.command.charCodeAt(commandEnd - 1);
   if (finalCommandUnit >= 0xd800 && finalCommandUnit <= 0xdbff) commandEnd -= 1;
@@ -465,7 +455,6 @@ function codexBackgroundCommandDetail(item: {
   return outputTail.length === 0 ? header : `${header}\n\nOutput tail:\n${outputTail}`;
 }
 
-// Codex spawns can omit the prompt, which registers as an empty string.
 function codexNativeSubagentLabel(task: OrchestrationV2Subagent): string | undefined {
   return task.title?.trim() || task.prompt.trim() || undefined;
 }
@@ -485,7 +474,6 @@ export interface CodexDynamicToolProjection extends McpToolPresentation {
   readonly status: OrchestrationV2TurnItem["status"];
 }
 
-// A hung MCP resource read must not hold run ingestion open.
 const MCP_APP_CAPTURE_TIMEOUT = "20 seconds";
 
 const CODEX_IMAGE_DATA_URL = /^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/i;
@@ -584,8 +572,6 @@ function approvalDecisionToLegacyReviewDecision(
 function providerRequestKindFromPermissions(
   permissions: CodexSchema.PermissionsRequestApprovalParams["permissions"],
 ): ProviderRequestKind {
-  // Codex leaves the legacy `read`/`write` lists out when a path is a glob or
-  // special path, and is replacing them with `entries`.
   const requests = (access: "read" | "write") =>
     (permissions.fileSystem?.[access]?.length ?? 0) > 0 ||
     permissions.fileSystem?.entries?.some((entry) => entry.access === access);
@@ -1406,7 +1392,7 @@ const CODEX_T3_DIRECT_MCP_SERVER = "t3-code-direct";
 const CODEX_DIRECT_ONLY_T3_TOOL = "t3_thread_wait";
 
 function codexThreadRuntimeParams(input: {
-  readonly threadId: ThreadId | null;
+  readonly threadEnvironment: Readonly<Record<string, Schema.Json>>;
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly modelSelection?: { readonly model: string };
   readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
@@ -1429,10 +1415,7 @@ function codexThreadRuntimeParams(input: {
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
     config: {
       ...CODEX_THREAD_CONFIG,
-      // One app-server serves many threads, so the id goes in per-thread shell config, not its env.
-      ...(input.threadId === null
-        ? {}
-        : { [`shell_environment_policy.set.${PortScanner.AGENT_THREAD_ENV}`]: input.threadId }),
+      ...input.threadEnvironment,
       ...(t3Server === undefined
         ? {}
         : {
@@ -1844,11 +1827,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           providerSessionId: input.providerSessionId,
           runtimePolicy: input.runtimePolicy,
           settings: resolvedRuntime?.config ?? adapterOptions.settings,
-          environment: withT3ThreadEnvironment(
+          environment: withT3SharedProcessEnvironment(
             resolvedRuntime?.environment ?? adapterOptions.environment,
-            input.threadId,
             adapterOptions.environmentId,
-            yield* railsAgentIdOfCwd(input.runtimePolicy.cwd),
           ),
         });
         const additionalContextByThread = yield* Ref.make(
@@ -1891,7 +1872,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ),
         );
         const initialized = yield* Ref.make(false);
-        // Codex rejects a second initialize on the shared app-server.
         const initializePermit = yield* Semaphore.make(1);
         const ensureInitialized = initializePermit.withPermit(
           Effect.gen(function* () {
@@ -1935,6 +1915,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         );
         // A failed open is discarded, so the next turn spawns the updated binary.
         if (adapterOptions.compatibility !== undefined) yield* ensureInitialized;
+        const threadEnvironment = (threadId: string | null, cwd: string | null | undefined) =>
+          codexThreadEnvironment({
+            threadId,
+            cwd,
+            environmentId: adapterOptions.environmentId,
+            readConfig: (configCwd) =>
+              ensureInitialized.pipe(
+                Effect.andThen(
+                  client.request("config/read", { cwd: configCwd ?? null, includeLayers: false }),
+                ),
+              ),
+          });
         const now = yield* DateTime.now;
         const session = providerSession({
           providerSessionId: input.providerSessionId,
@@ -7640,11 +7632,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ensureThread: (threadInput) =>
             ensureInitialized.pipe(
               Effect.andThen(mcpSessions.read(threadInput.threadId)),
-              Effect.flatMap((mcpSession) =>
+              Effect.zip(threadEnvironment(threadInput.threadId, threadInput.runtimePolicy.cwd)),
+              Effect.flatMap(([mcpSession, environment]) =>
                 client.request(
                   "thread/start",
                   codexThreadRuntimeParams({
-                    threadId: threadInput.threadId,
+                    threadEnvironment: environment,
                     mcpSession,
                     modelSelection: threadInput.modelSelection,
                     runtimePolicy: threadInput.runtimePolicy,
@@ -7678,7 +7671,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const resume = resumeNativeThread(nativeThreadId, {
                 excludeTurns: true,
                 ...codexThreadRuntimeParams({
-                  threadId: appThreadId,
+                  threadEnvironment: yield* threadEnvironment(
+                    appThreadId,
+                    threadInput.runtimePolicy?.cwd,
+                  ),
                   mcpSession: yield* readMcpSession(appThreadId),
                   ...(threadInput.modelSelection === undefined
                     ? {}
@@ -8472,7 +8468,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 yield* resumeNativeThread(threadId, {
                   excludeTurns: true,
                   ...codexThreadRuntimeParams({
-                    threadId: threadInput.providerThread.appThreadId,
+                    threadEnvironment: yield* threadEnvironment(
+                      threadInput.providerThread.appThreadId,
+                      input.runtimePolicy?.cwd,
+                    ),
                     mcpSession: yield* readMcpSession(threadInput.providerThread.appThreadId),
                     modelSelection: input.modelSelection,
                     runtimePolicy: input.runtimePolicy,
@@ -8522,7 +8521,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 excludeTurns: true,
                 ...(boundary.lastTurnId === undefined ? {} : { lastTurnId: boundary.lastTurnId }),
                 ...codexThreadRuntimeParams({
-                  threadId: threadInput.targetThreadId,
+                  threadEnvironment: yield* threadEnvironment(
+                    threadInput.targetThreadId,
+                    threadInput.runtimePolicy?.cwd,
+                  ),
                   mcpSession: yield* mcpSessions.read(threadInput.targetThreadId),
                   ...(threadInput.modelSelection === undefined
                     ? {}

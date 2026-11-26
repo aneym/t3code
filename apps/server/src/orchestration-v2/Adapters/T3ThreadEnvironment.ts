@@ -31,3 +31,13 @@ export function withT3ThreadEnvironment(
     ...(railsAgentId === undefined ? {} : { T3_RAILS_AGENT_ID: railsAgentId }),
   };
 }
+
+export function withT3SharedProcessEnvironment(
+  environment: NodeJS.ProcessEnv,
+  environmentId: string | undefined,
+): NodeJS.ProcessEnv {
+  const base = { ...environment };
+  delete base.T3_THREAD_ID;
+  delete base.T3_RAILS_AGENT_ID;
+  return environmentId === undefined ? base : { ...base, T3_ENVIRONMENT_ID: environmentId };
+}
