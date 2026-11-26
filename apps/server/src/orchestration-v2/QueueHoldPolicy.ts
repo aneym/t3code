@@ -6,6 +6,7 @@ import type {
 import {
   latestExecutedRun,
   latestRootProviderFailure,
+  runRanAfter,
   usageLimitBlockedRun,
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
@@ -20,6 +21,133 @@ const WAKEABLE_FAILURES: ReadonlySet<OrchestrationV2ProviderFailureClass> = new 
   "provider_error",
   "transport_error",
 ]);
+
+export const TRANSIENT_QUEUE_RESUME_MAX_ATTEMPTS = 3;
+export const TRANSIENT_QUEUE_RESUME_BASE_DELAY_MS = 30_000;
+const TRANSIENT_QUEUE_RESUME_MAX_DELAY_MS = 10 * 60 * 1_000;
+
+type TransientBlockedQueueResumePlan =
+  | { readonly status: "skip" }
+  | {
+      readonly status: "wait";
+      readonly dueAtMs: number;
+      readonly attempt: number;
+      readonly providerInstanceId: OrchestrationV2Run["providerInstanceId"];
+      readonly heldAt: DateTime.Utc;
+      readonly failureClass: OrchestrationV2ProviderFailureClass;
+    }
+  | {
+      readonly status: "due";
+      readonly attempt: number;
+      readonly providerInstanceId: OrchestrationV2Run["providerInstanceId"];
+      readonly heldAt: DateTime.Utc;
+      readonly failureClass: OrchestrationV2ProviderFailureClass;
+    };
+
+function isActiveQueueRun(run: OrchestrationV2Run): boolean {
+  return (
+    run.status === "preparing" ||
+    run.status === "starting" ||
+    run.status === "running" ||
+    run.status === "waiting"
+  );
+}
+
+export function transientQueueResumeDelayMs(priorAttempts: number): number {
+  return Math.min(
+    TRANSIENT_QUEUE_RESUME_BASE_DELAY_MS * 2 ** Math.max(0, priorAttempts),
+    TRANSIENT_QUEUE_RESUME_MAX_DELAY_MS,
+  );
+}
+
+function transientFailureStreak(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  turnItems: OrchestrationV2ThreadProjection["turnItems"],
+  providerInstanceId: OrchestrationV2Run["providerInstanceId"],
+): number {
+  const executed = runs
+    .filter(
+      (run) => run.status !== "queued" && !(run.status === "cancelled" && run.startedAt === null),
+    )
+    .toSorted((left, right) => (runRanAfter(right, left) ? 1 : runRanAfter(left, right) ? -1 : 0));
+  let streak = 0;
+  for (const run of executed) {
+    if (run.providerInstanceId !== providerInstanceId || run.status !== "failed") break;
+    const failureClass = latestRootProviderFailure(run, turnItems)?.class;
+    if (failureClass === undefined || !WAKEABLE_FAILURES.has(failureClass)) break;
+    streak++;
+  }
+  return streak;
+}
+
+export function transientBlockedQueueResumePlan(
+  projection: Pick<
+    OrchestrationV2ThreadProjection,
+    "thread" | "runs" | "turnItems" | "runtimeRequests" | "providerSessions"
+  >,
+  healthyProviderIds: ReadonlySet<OrchestrationV2Run["providerInstanceId"]>,
+  nowMs: number,
+): TransientBlockedQueueResumePlan {
+  const { thread } = projection;
+  if (
+    thread.archivedAt !== null ||
+    thread.deletedAt !== null ||
+    thread.settledOverride === "settled" ||
+    projection.runs.some(isActiveQueueRun) ||
+    worktreeSetupPending(projection) ||
+    projection.runtimeRequests.some((request) => request.status === "pending")
+  ) {
+    return { status: "skip" };
+  }
+  const held = projection.runs.filter((run) => run.status === "queued" && run.queueHeld === true);
+  if (held.length === 0) return { status: "skip" };
+  if (
+    !held.every(
+      (run) =>
+        run.queueHoldReason === "blocked" &&
+        run.queueHoldFailureClass !== undefined &&
+        WAKEABLE_FAILURES.has(run.queueHoldFailureClass),
+    )
+  ) {
+    return { status: "skip" };
+  }
+  const ordered = held.toSorted(
+    (left, right) =>
+      (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal) ||
+      left.ordinal - right.ordinal,
+  );
+  const nextRun = ordered[0];
+  if (nextRun === undefined || nextRun.queueHoldFailureClass === undefined) {
+    return { status: "skip" };
+  }
+  const providerInstanceId = nextRun.providerInstanceId;
+  if (!healthyProviderIds.has(providerInstanceId)) return { status: "skip" };
+  if (usageLimitHoldsQueue(projection, providerInstanceId, DateTime.makeUnsafe(nowMs))) {
+    return { status: "skip" };
+  }
+  const heldAt = held.reduce<DateTime.Utc | undefined>(
+    (latest, run) =>
+      run.queueHeldAt !== undefined &&
+      (latest === undefined || DateTime.isGreaterThan(run.queueHeldAt, latest))
+        ? run.queueHeldAt
+        : latest,
+    undefined,
+  );
+  if (heldAt === undefined) return { status: "skip" };
+  const streak = transientFailureStreak(projection.runs, projection.turnItems, providerInstanceId);
+  const priorAttempts = Math.max(0, streak - 1);
+  if (priorAttempts >= TRANSIENT_QUEUE_RESUME_MAX_ATTEMPTS) return { status: "skip" };
+  const attempt = priorAttempts + 1;
+  const backoffDueAtMs =
+    DateTime.toEpochMillis(heldAt) + transientQueueResumeDelayMs(priorAttempts);
+  const snoozedUntilMs =
+    thread.snoozedUntil == null ? 0 : DateTime.toEpochMillis(thread.snoozedUntil);
+  const dueAtMs = Math.max(backoffDueAtMs, snoozedUntilMs);
+  const failureClass = nextRun.queueHoldFailureClass;
+  return dueAtMs > nowMs
+    ? { status: "wait", dueAtMs, attempt, providerInstanceId, heldAt, failureClass }
+    : { status: "due", attempt, providerInstanceId, heldAt, failureClass };
+}
 
 function clearQueueHold(run: OrchestrationV2Run): OrchestrationV2Run {
   const {
