@@ -36,7 +36,11 @@ import {
   type ClaudeLedgerUsage,
   type ClaudeModelLedger,
 } from "../../provider/ClaudeTurnTokenUsage.ts";
-import { currentEnvironmentId, withT3ThreadEnvironment } from "./T3ThreadEnvironment.ts";
+import {
+  currentEnvironmentId,
+  railsAgentIdOfCwd,
+  withT3ThreadEnvironment,
+} from "./T3ThreadEnvironment.ts";
 import { toMcpElicitationResponse } from "../../provider/CodexMcpElicitation.ts";
 import {
   type CanUseTool,
@@ -11992,6 +11996,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   adapterOptions.environment,
                   turnInput.appThread.id,
                   environmentId,
+                  yield* railsAgentIdOfCwd(turnInput.runtimePolicy.cwd),
                 ),
                 turnInput.appThread,
               ),
