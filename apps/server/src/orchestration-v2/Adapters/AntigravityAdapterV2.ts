@@ -35,7 +35,11 @@ import {
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
 import { readProjectMcpServers } from "../../provider/acp/projectMcpServers.ts";
 import { AgentScopeThreadId } from "@t3tools/shared/AgentScope";
-import { currentEnvironmentId, withT3ThreadEnvironment } from "./T3ThreadEnvironment.ts";
+import {
+  currentEnvironmentId,
+  railsAgentIdOfCwd,
+  withT3ThreadEnvironment,
+} from "./T3ThreadEnvironment.ts";
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
   antigravityApprovalOptions,
@@ -146,7 +150,14 @@ export function makeAntigravityAcpAdapterFlavor(
       const scope = yield* Scope.fork(yield* Effect.scope);
       const threadId = yield* AgentScopeThreadId;
       const thread =
-        threadId === undefined ? {} : withT3ThreadEnvironment({}, threadId, options.environmentId);
+        threadId === undefined
+          ? {}
+          : withT3ThreadEnvironment(
+              {},
+              threadId,
+              options.environmentId,
+              yield* railsAgentIdOfCwd(input.cwd),
+            );
       const threadVars = Object.entries(thread).flatMap(([name, value]) =>
         value === undefined ? [] : [{ name, value }],
       );

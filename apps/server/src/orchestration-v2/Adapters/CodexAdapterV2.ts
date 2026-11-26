@@ -142,7 +142,11 @@ import {
   type ProviderAdapterDriverCreateInput,
 } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
-import { currentEnvironmentId, withT3ThreadEnvironment } from "./T3ThreadEnvironment.ts";
+import {
+  currentEnvironmentId,
+  railsAgentIdOfCwd,
+  withT3ThreadEnvironment,
+} from "./T3ThreadEnvironment.ts";
 import { backgroundWorkNotification } from "@t3tools/provider-core/server/notification";
 import {
   makeProviderFailure,
@@ -1844,6 +1848,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             resolvedRuntime?.environment ?? adapterOptions.environment,
             input.threadId,
             adapterOptions.environmentId,
+            yield* railsAgentIdOfCwd(input.runtimePolicy.cwd),
           ),
         });
         const additionalContextByThread = yield* Ref.make(
