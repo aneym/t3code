@@ -1,5 +1,6 @@
 import { readClaudeTranscriptState } from "./ClaudeTranscriptAvailability.ts";
 import * as DocumentText from "../../provider/DocumentText.ts";
+import { isPoolExhaustedText } from "../../provider/poolExhaustion.ts";
 import {
   compactDynamicToolOutput,
   mcpToolResultOutput,
@@ -4312,7 +4313,9 @@ function providerFailureFromResult(
     });
   }
   const failureClass =
-    (message.subtype === "success" && message.api_error_status === 429) || usageLimited
+    (message.subtype === "success" &&
+      (message.api_error_status === 429 || isPoolExhaustedText(message.result))) ||
+    usageLimited
       ? "usage_limit"
       : "provider_error";
   const listedError = resultUserFacingError(message);

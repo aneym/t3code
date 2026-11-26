@@ -6,6 +6,7 @@ import {
   OrchestrationV2RunStatus,
 } from "./orchestrationV2.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { OrchestrationV2RunFallback } from "./orchestrationV2RunFallback.ts";
 import { ProviderPermissionDenial } from "./providerPermissionDenial.ts";
 import { TurnTokenUsage } from "./providerRuntime.ts";
 
@@ -28,5 +29,6 @@ export const OrchestratorMcpThreadRun = Schema.Struct({
   contextUsage: Schema.optional(OrchestrationV2ProviderTurnTokenUsage),
   tokenUsage: Schema.optional(TurnTokenUsage),
   permissionDenials: Schema.optional(Schema.Array(ProviderPermissionDenial)),
+  fallback: Schema.optional(OrchestrationV2RunFallback),
 });
 export type OrchestratorMcpThreadRun = typeof OrchestratorMcpThreadRun.Type;

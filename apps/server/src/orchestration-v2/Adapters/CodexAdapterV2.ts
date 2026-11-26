@@ -1,5 +1,6 @@
 import { pipe } from "effect/Function";
 import { codexAppServerDeadline } from "./CodexAppServerDeadline.ts";
+import { isPoolExhaustedText } from "../../provider/poolExhaustion.ts";
 import {
   codexItemStatus,
   codexMcpAppResourceUri,
@@ -166,6 +167,7 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 const CODEX_PROVIDER = ProviderDriverKind.make("codex");
 const CODEX_CAPACITY_MAX_RETRIES = 5;
 const CODEX_PROVIDER_RETRY_STALL_TIMEOUT = "10 minutes";
+const CODEX_POOL_EXHAUSTED_GRACE = "1 second";
 export const CODEX_DRIVER_KIND = CODEX_PROVIDER;
 export const CODEX_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CODEX_DRIVER_KIND);
 
@@ -5046,6 +5048,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             };
             const code = codexErrorInfoCode(payload.error.codexErrorInfo);
             const additionalDetails = payload.error.additionalDetails?.trim();
+            const poolExhausted = isPoolExhaustedText(
+              `${payload.error.message}\n${additionalDetails ?? ""}`,
+            );
             const failure = withCodexManagedFailure(
               makeProviderFailure({
                 message:
@@ -5053,11 +5058,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     ? payload.error.message
                     : additionalDetails,
                 code,
-                class: codexUsageLimitError(code, payload.error.codexErrorInfo)
-                  ? "usage_limit"
-                  : code?.startsWith("http") === true || code?.startsWith("responseStream") === true
-                    ? "transport_error"
-                    : "provider_error",
+                class:
+                  poolExhausted || codexUsageLimitError(code, payload.error.codexErrorInfo)
+                    ? "usage_limit"
+                    : code?.startsWith("http") === true ||
+                        code?.startsWith("responseStream") === true
+                      ? "transport_error"
+                      : "provider_error",
                 retryable: true,
               }),
               payload.error,
@@ -5080,7 +5087,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return updated;
             });
             yield* failStalledProviderRetry(context, state, payload.error.codexErrorInfo).pipe(
-              Effect.delay(CODEX_PROVIDER_RETRY_STALL_TIMEOUT),
+              Effect.delay(
+                poolExhausted ? CODEX_POOL_EXHAUSTED_GRACE : CODEX_PROVIDER_RETRY_STALL_TIMEOUT,
+              ),
               Effect.forkIn(scope, { startImmediately: true }),
             );
             yield* emitProviderEvent({

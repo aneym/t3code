@@ -1462,6 +1462,7 @@ const make = Effect.gen(function* () {
       providerInstanceId: modelSelection.instanceId,
       model: modelSelection.model,
       executedModel: runExecutedModel(childControls, executionRun),
+      ...(executionRun?.fallback === undefined ? {} : { fallback: executionRun.fallback }),
       options: modelSelection.options ?? [],
       summary: derivedResult,
       resultContextTransferId,

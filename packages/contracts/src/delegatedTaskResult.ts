@@ -12,6 +12,7 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 import { ProviderRequestKind } from "./providerPolicy.ts";
 import { AgentPlacementHold, AgentPlacementReceipt } from "./agentPlacement.ts";
 import { OrchestratorMcpExecutedModel } from "./orchestratorMcpThreadRun.ts";
+import { OrchestrationV2RunFallback } from "./orchestrationV2RunFallback.ts";
 const OrchestratorMcpDelegatedTaskStatus = Schema.Literals([
   "queued",
   "preparing",
@@ -60,6 +61,7 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
   model: Schema.NullOr(Schema.String),
   executedModel: Schema.optional(OrchestratorMcpExecutedModel),
+  fallback: Schema.optional(OrchestrationV2RunFallback),
   options: Schema.optional(Schema.Array(ProviderOptionSelection)),
   summary: Schema.NullOr(Schema.String),
   resultContextTransferId: Schema.NullOr(ContextTransferId),

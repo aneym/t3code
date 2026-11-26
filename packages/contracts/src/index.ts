@@ -72,6 +72,7 @@ export * from "./orchestratorMcpTarget.ts";
 export * from "./orchestratorMcpFailure.ts";
 export * from "./orchestratorMcpEnvironmentLinks.ts";
 export * from "./orchestratorMcpThreadRun.ts";
+export * from "./orchestrationV2RunFallback.ts";
 export * from "./delegateTaskInput.ts";
 export * from "./delegatedTaskResult.ts";
 export * from "./orchestratorMcpScheduledTask.ts";

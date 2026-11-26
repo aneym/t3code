@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- node:sqlite and lstat read the native session log.
 import * as NodeFSP from "node:fs/promises";
+import { isPoolExhaustedText } from "../poolExhaustion.ts";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 
@@ -115,7 +116,7 @@ function turnFailure(
   if (errorText === undefined && stopReason !== "refusal") return undefined;
   const text = errorText ?? "";
   const apiError = API_ERROR.exec(text);
-  if (stopReason === "refusal" || QUOTA_EXHAUSTED.test(text)) {
+  if (stopReason === "refusal" || QUOTA_EXHAUSTED.test(text) || isPoolExhaustedText(text)) {
     return makeProviderFailure({
       class: "usage_limit",
       message: "You have reached your Antigravity quota for this period.",

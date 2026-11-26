@@ -1,5 +1,6 @@
 import {
   type OrchestrationV2ConversationMessage,
+  type OrchestrationV2RunFallback,
   type OrchestrationV2Run,
   orchestrationV2RunWorkStartedAt,
   type OrchestrationV2ThreadProjection,
@@ -7,11 +8,26 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+import { keepsThreadModelSelection } from "./runLocalModelSelection.ts";
+
 interface Continuation {
   readonly restartContinuationOfRunId?: RunId | undefined;
   readonly usageLimitContinuationOfRunId?: RunId | undefined;
   readonly manualContinuationOfRunId?: RunId | undefined;
 }
+
+export const carriedRunFields = (command: {
+  readonly messageId: string;
+  readonly usageLimitContinuationOfRunId?: RunId | undefined;
+  readonly fallback?: OrchestrationV2RunFallback | undefined;
+}): Pick<OrchestrationV2Run, "usageLimitContinuationOfRunId" | "fallback"> => ({
+  ...(command.usageLimitContinuationOfRunId === undefined
+    ? {}
+    : { usageLimitContinuationOfRunId: command.usageLimitContinuationOfRunId }),
+  ...(command.fallback === undefined || !keepsThreadModelSelection(command.messageId)
+    ? {}
+    : { fallback: command.fallback }),
+});
 
 export const continuedChildLight = (
   runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "childLight">>,

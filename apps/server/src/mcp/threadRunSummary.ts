@@ -37,6 +37,7 @@ function threadRun(
     ...(turn?.tokenUsage === undefined ? {} : { contextUsage: turn.tokenUsage }),
     ...(turn?.turnTokenUsage === undefined ? {} : { tokenUsage: turn.turnTokenUsage }),
     ...(turn?.permissionDenials === undefined ? {} : { permissionDenials: turn.permissionDenials }),
+    ...(run.fallback === undefined ? {} : { fallback: run.fallback }),
   };
 }
 

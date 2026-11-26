@@ -1,4 +1,4 @@
-import { continuedChildLight, wakeWorkStartedAt } from "./RunCarryOver.ts";
+import { carriedRunFields, continuedChildLight, wakeWorkStartedAt } from "./RunCarryOver.ts";
 import { delegatedChildWorkspace } from "./DelegatedChildWorkspace.ts";
 import { messageDispatchWindow, runWindow } from "./CommandRunWindow.ts";
 import {
@@ -7031,9 +7031,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.restartContinuationOfRunId === undefined
           ? {}
           : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
-        ...(command.usageLimitContinuationOfRunId === undefined
-          ? {}
-          : { usageLimitContinuationOfRunId: command.usageLimitContinuationOfRunId }),
+        ...carriedRunFields(command),
         ...continuedChildLight(projection.runs, command),
         ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
         ...(freshContext ? { freshContext: true } : {}),
@@ -7443,9 +7441,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.restartContinuationOfRunId === undefined
           ? {}
           : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
-        ...(command.usageLimitContinuationOfRunId === undefined
-          ? {}
-          : { usageLimitContinuationOfRunId: command.usageLimitContinuationOfRunId }),
+        ...carriedRunFields(command),
         ...continuedChildLight(projection.runs, command),
         ...(dispatchMode.type === "defer_start" && dispatchMode.workspaceStrategy !== undefined
           ? { workspacePreparation: dispatchMode.workspaceStrategy }
@@ -8236,9 +8232,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...(command.restartContinuationOfRunId === undefined
         ? {}
         : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
-      ...(command.usageLimitContinuationOfRunId === undefined
-        ? {}
-        : { usageLimitContinuationOfRunId: command.usageLimitContinuationOfRunId }),
+      ...carriedRunFields(command),
       ...continuedChildLight(projection.runs, command),
       ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
       ...wakeWorkStartedAt(projection, command),

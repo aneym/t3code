@@ -1,22 +1,34 @@
 import {
   CommandId,
   MessageId,
-  ModelSelection,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
+  type OrchestrationV2RunFallback,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as ServerConfig from "../config.ts";
+import { isPoolExhaustedText, poolResetAt } from "../provider/poolExhaustion.ts";
+import { probePoolHeadroom } from "../provider/poolHeadroom.ts";
+import { ProviderInstanceRegistry } from "../provider/ProviderInstanceRegistry.ts";
 import { forkParked } from "../serverActivation.ts";
+import {
+  decideFallback,
+  type ExhaustedProvider,
+  FallbackStep,
+  type PoolState,
+  stepIndex,
+} from "./ModelFallbackChain.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import { RUN_LOCAL_MODEL_MESSAGE_PREFIX } from "./runLocalModelSelection.ts";
+import { fallbackMessageId, RUN_LOCAL_MODEL_MESSAGE_PREFIX } from "./runLocalModelSelection.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
 const FALLBACK_CHAIN_FILE = "model-fallback-chain.json";
@@ -25,15 +37,9 @@ const QUOTA_NOTICE =
   /^\W{0,4}(individual quota reached|rate limit exceeded until|you have reached your [\w\s]{0,40}quota|resource_exhausted)/i;
 const QUOTA_TAIL =
   /\n\W{0,4}(individual quota reached\.[^\n]{0,200}resets in (\d+[hms])+\.?|rate limit exceeded until \S+ \(in \d+s\))\s*$/i;
+const OVERLOADED = /^api_error_5(03|29)$|overloaded/i;
 const MAX_NOTICE_CHARS = 600;
 const HANDLED_LIMIT = 2_000;
-
-const FallbackStep = Schema.Struct({
-  label: Schema.String,
-  modelSelection: ModelSelection,
-  personChatOnly: Schema.optional(Schema.Boolean),
-});
-type FallbackStep = typeof FallbackStep.Type;
 
 const FallbackChainFile = Schema.Struct({
   enabled: Schema.optional(Schema.Boolean),
@@ -43,51 +49,49 @@ const decodeChainFile = Schema.decodeUnknownEffect(Schema.fromJsonString(Fallbac
 
 type Items = OrchestrationV2ThreadProjection["turnItems"];
 
-const stepIndex = (
-  chain: ReadonlyArray<FallbackStep>,
-  selected: Pick<OrchestrationV2Run, "modelSelection">,
-) =>
-  chain.findIndex(
-    (step) =>
-      step.modelSelection.instanceId === selected.modelSelection.instanceId &&
-      step.modelSelection.model === selected.modelSelection.model,
-  );
-
-function nextFallbackStep(
-  chain: ReadonlyArray<FallbackStep>,
-  run: Pick<OrchestrationV2Run, "modelSelection">,
-  personChat: boolean,
-): { readonly at: number; readonly from: FallbackStep; readonly to: FallbackStep } | null {
-  const at = stepIndex(chain, run);
-  if (at < 0) return null;
-  const to = chain
-    .slice(at + 1)
-    .find(
-      (step) =>
-        step.modelSelection.instanceId !== run.modelSelection.instanceId &&
-        (personChat || step.personChatOnly !== true),
-    );
-  return to === undefined ? null : { at, from: chain[at]!, to };
+interface Outage {
+  readonly reason: OrchestrationV2RunFallback["reasonKind"];
+  readonly resetsAt?: string | undefined;
 }
 
-function endedOnUsageLimit(runId: OrchestrationV2Run["id"], items: Items): boolean {
+function runOutage(runId: OrchestrationV2Run["id"], items: Items, nowMs: number): Outage | null {
   const own = items.filter((item) => item.runId === runId);
-  if (
-    own.some(
-      (item) =>
-        item.type === "error" && item.failure.class === "usage_limit" && item.retry === undefined,
-    )
-  ) {
-    return true;
+  for (const item of own) {
+    if (item.type !== "error" || item.retry !== undefined) continue;
+    const { failure } = item;
+    const resetsAt =
+      failure.resetAt ?? poolResetAt(`${failure.message}\n${failure.code ?? ""}`, nowMs);
+    if (isPoolExhaustedText(`${failure.message}\n${failure.code ?? ""}`)) {
+      return { reason: "no_accounts", resetsAt };
+    }
+    if (failure.class === "usage_limit") return { reason: "limit", resetsAt };
+    if (failure.class === "provider_error" && OVERLOADED.test(failure.code ?? failure.message)) {
+      return { reason: "outage", resetsAt };
+    }
   }
   const last = own.filter((item) => item.type === "assistant_message").at(-1);
-  if (last === undefined || last.type !== "assistant_message") return false;
+  if (last === undefined || last.type !== "assistant_message") return null;
   const text = last.text.trim();
-  return (text.length <= MAX_NOTICE_CHARS && QUOTA_NOTICE.test(text)) || QUOTA_TAIL.test(last.text);
+  return (text.length <= MAX_NOTICE_CHARS && QUOTA_NOTICE.test(text)) || QUOTA_TAIL.test(last.text)
+    ? { reason: "limit", resetsAt: poolResetAt(text, nowMs) }
+    : null;
 }
 
-const fallbackNotice = (from: FallbackStep, to: FallbackStep) =>
-  `${from.label} hit its usage limit, so this message runs on ${to.label}.`;
+const outageReason = (from: FallbackStep, outage: Outage) =>
+  `${from.label} was ${outage.reason === "outage" ? "down" : "out of quota"}`;
+
+const exhaustedNotice = (providers: ReadonlyArray<ExhaustedProvider>) =>
+  `No model is free for this turn, so it stopped. ${providers
+    .map(
+      (provider) =>
+        `${provider.label}: ${provider.resetsAt === undefined ? "reset time unknown" : `resets ${provider.resetsAt}`}.`,
+    )
+    .join(" ")}`;
+
+const previousRunId = (messageId: string) =>
+  messageId.startsWith(RUN_LOCAL_MODEL_MESSAGE_PREFIX)
+    ? messageId.slice(RUN_LOCAL_MODEL_MESSAGE_PREFIX.length)
+    : undefined;
 
 const isFinished = (
   event: OrchestrationV2DomainEvent,
@@ -99,6 +103,7 @@ const isFinished = (
 const makeHandler = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  const instances = yield* Effect.serviceOption(ProviderInstanceRegistry);
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const { stateDir } = yield* ServerConfig.ServerConfig;
@@ -111,15 +116,54 @@ const makeHandler = Effect.gen(function* () {
     Effect.orElseSucceed((): ReadonlyArray<FallbackStep> => []),
   );
 
+  const configuredInstances = Option.match(instances, {
+    onNone: () => Effect.undefined,
+    onSome: (registry) =>
+      registry.listInstances.pipe(
+        Effect.map((list) => new Set<string>(list.map((instance) => instance.instanceId))),
+      ),
+  });
+
+  const seriesOutages = Effect.fn("UsageLimitFallbackWorker.seriesOutages")(function* (
+    run: OrchestrationV2Run,
+    outage: Outage,
+    nowMs: number,
+  ) {
+    const outages = new Map<string, Outage>([[run.modelSelection.instanceId, outage]]);
+    const { runs } = yield* projections.getThreadRecords(run.threadId, ["runs"]);
+    const series: Array<OrchestrationV2Run> = [];
+    let cursor = previousRunId(run.userMessageId);
+    while (cursor !== undefined && series.length < 8) {
+      const earlier = runs.find((candidate) => candidate.id === cursor);
+      if (earlier === undefined) break;
+      series.push(earlier);
+      cursor = previousRunId(earlier.userMessageId);
+    }
+    if (series.length === 0) return outages;
+    const { turnItems } = yield* projections.getThreadRecords(run.threadId, ["turnItems"], {
+      turnItemRunIds: series.map((earlier) => earlier.id),
+    });
+    for (const earlier of series) {
+      const found = runOutage(earlier.id, turnItems, nowMs);
+      if (found !== null && !outages.has(earlier.modelSelection.instanceId)) {
+        outages.set(earlier.modelSelection.instanceId, found);
+      }
+    }
+    return outages;
+  });
+
   return Effect.fn("UsageLimitFallbackWorker.handle")(function* (run: OrchestrationV2Run) {
     if (handled.has(run.id)) return;
     const chain = yield* readChain;
-    if (stepIndex(chain, run) < 0) return;
+    if (stepIndex(chain, run.modelSelection) < 0) return;
+    const now = yield* DateTime.now;
+    const nowMs = DateTime.toEpochMillis(now);
     const records = yield* projections.getThreadRecords(run.threadId, ["turnItems", "messages"], {
       turnItemRunIds: [run.id],
       messageIds: [run.userMessageId],
     });
-    if (!endedOnUsageLimit(run.id, records.turnItems)) return;
+    const outage = runOutage(run.id, records.turnItems, nowMs);
+    if (outage === null) return;
     const thread = records.thread;
     const original = records.messages.find((message) => message.id === run.userMessageId);
     if (thread.archivedAt != null || original === undefined || original.role !== "user") return;
@@ -128,24 +172,70 @@ const makeHandler = Effect.gen(function* () {
       original.senderThreadId === undefined &&
       original.linkedSender === undefined &&
       original.scheduledTaskId === undefined;
-    const step = nextFallbackStep(chain, run, personChat);
-    if (step === null) return;
-    const storedAt = stepIndex(chain, thread);
-    if (storedAt < 0 || storedAt > step.at) return;
-    const isRetry = original.id.startsWith(RUN_LOCAL_MODEL_MESSAGE_PREFIX);
-    const text = isRetry ? original.text.slice(original.text.indexOf("\n\n") + 2) : original.text;
+    const outages = yield* seriesOutages(run, outage, nowMs);
+    const headroom = yield* probePoolHeadroom;
+    const configured = yield* configuredInstances;
+    const pool = (step: FallbackStep): PoolState | undefined => {
+      const failed = outages.get(step.modelSelection.instanceId);
+      return failed === undefined
+        ? headroom(step.modelSelection.instanceId)
+        : { exhausted: true, resetsAt: failed.resetsAt };
+    };
+    const decision = decideFallback({
+      chain,
+      run: run.modelSelection,
+      stored: thread.modelSelection,
+      personChat,
+      allowed: (step) => configured === undefined || configured.has(step.modelSelection.instanceId),
+      pool,
+    });
+    if (decision.type === "none") return;
     handled.add(run.id);
     if (handled.size > HANDLED_LIMIT) handled.delete(handled.values().next().value!);
+    if (decision.type === "exhausted") {
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`quota-exhausted-note:${run.id}`),
+        messageId: MessageId.make(`quota-exhausted:${run.id}`),
+        threadId: run.threadId,
+        text: exhaustedNotice(decision.providers),
+        attachments: [],
+        dispatchMode: { type: "note" },
+        createdBy: "system",
+        creationSource: "server",
+      });
+      yield* Effect.logWarning("orchestration-v2.quota-fallback.exhausted", {
+        threadId: run.threadId,
+        runId: run.id,
+        providers: decision.providers,
+      });
+      return;
+    }
+    const { from, to } = decision;
+    const reason = outageReason(from, outage);
+    const fallback: OrchestrationV2RunFallback = {
+      fromProvider: run.modelSelection.instanceId,
+      fromModel: run.modelSelection.model,
+      toProvider: to.modelSelection.instanceId,
+      toModel: to.modelSelection.model,
+      reasonKind: outage.reason,
+      reason,
+      resetsAt: outage.resetsAt ?? null,
+      at: DateTime.formatIso(now),
+    };
+    const isRetry = original.id.startsWith(RUN_LOCAL_MODEL_MESSAGE_PREFIX);
+    const text = isRetry ? original.text.slice(original.text.indexOf("\n\n") + 2) : original.text;
     yield* threads.dispatch({
       type: "message.dispatch",
       commandId: CommandId.make(`quota-fallback-resend:${run.id}`),
-      messageId: MessageId.make(`${RUN_LOCAL_MODEL_MESSAGE_PREFIX}${run.id}`),
+      messageId: MessageId.make(fallbackMessageId(run.id)),
       threadId: run.threadId,
-      text: `${fallbackNotice(step.from, step.to)}\n\n${text}`,
+      text: `Ran on ${to.label}: ${reason}.\n\n${text}`,
       attachments: original.attachments,
       ...(original.context === undefined ? {} : { context: original.context }),
       ...(original.senderThreadId === undefined ? {} : { senderThreadId: original.senderThreadId }),
-      modelSelection: step.to.modelSelection,
+      modelSelection: to.modelSelection,
+      fallback,
       dispatchMode: { type: "queue_after_active" },
       createdBy: original.createdBy,
       creationSource: "server",
@@ -153,8 +243,9 @@ const makeHandler = Effect.gen(function* () {
     yield* Effect.logInfo("orchestration-v2.quota-fallback.resent", {
       threadId: run.threadId,
       runId: run.id,
-      from: step.from.label,
-      to: step.to.label,
+      from: from.label,
+      to: to.label,
+      reason,
     });
   });
 });
