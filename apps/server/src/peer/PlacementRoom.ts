@@ -141,7 +141,7 @@ export const queuePick = (
   };
   return {
     environmentId: chosen.environmentId,
-    reason: `Every machine is full; queued on ${chosen.label} at position ${position}, the shortest queue.`,
+    reason: `Every machine is full; sent to ${chosen.label}, the shortest queue. It waits there only if ${chosen.label} holds it.`,
     hold,
   };
 };

@@ -36,14 +36,17 @@ export const withHold = Effect.fn("DelegatedHold.withHold")(function* <A extends
         ? {}
         : { placement: { ...result.placement, hold: there } }),
     };
+  if (result.remoteChild !== undefined) {
+    if (result.placement?.hold === undefined) return result;
+    const { hold: _unheld, ...placement } = result.placement;
+    return { ...result, placement };
+  }
   if (result.status !== "queued" && result.status !== "preparing") return result;
   const gate = yield* Effect.serviceOption(Gate.DelegatedChildStartGate);
   const hold =
-    result.remoteChild !== undefined
-      ? result.placement?.hold
-      : result.childRunId === null || Option.isNone(gate)
-        ? undefined
-        : yield* gate.value.hold(result.childRunId);
+    result.childRunId === null || Option.isNone(gate)
+      ? undefined
+      : yield* gate.value.hold(result.childRunId);
   if (hold === undefined) return result;
   return {
     ...result,
