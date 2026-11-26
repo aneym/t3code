@@ -201,7 +201,9 @@ export const AntigravityDriver: ProviderDriver<
       );
 
     const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
-      input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
+      input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner"> & {
+        readonly threadEnvironment?: NodeJS.ProcessEnv;
+      },
     ): Effect.fn.Return<
       AcpSessionRuntime.AcpSessionRuntime["Service"],
       AcpErrors.AcpError | ProviderSetupError,
@@ -246,9 +248,6 @@ export const AntigravityDriver: ProviderDriver<
             : cause,
         ),
       );
-      // Use one directory per process; shared cleanup could delete files another session still reads.
-      // Remove after the child dies, best-effort on Windows where handles may outlive the kill;
-      // the next driver start sweeps leftovers.
       const runtimeTempDirectory = yield* Effect.acquireRelease(
         fileSystem.makeTempDirectory({ directory: profile.tempDirectory, prefix: "run-" }).pipe(
           Effect.mapError(
@@ -280,7 +279,7 @@ export const AntigravityDriver: ProviderDriver<
           installation: executable,
           profile,
           cwd: input.cwd,
-          baseEnv: processEnvironment,
+          baseEnv: { ...processEnvironment, ...input.threadEnvironment },
           auth,
           runtimeTempDirectory,
         }),

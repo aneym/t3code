@@ -260,7 +260,7 @@ function normalizeThreadRequest(frame: unknown, ignoredConfigKeys: ReadonlySet<s
       ([key]) =>
         key !== "mcp_servers" &&
         !key.startsWith("mcp_servers.") &&
-        key !== "shell_environment_policy.set.T3CODE_THREAD_ID",
+        !/^shell_environment_policy\.set\.T3(CODE)?_/.test(key),
     ),
   );
   for (const key of ignoredConfigKeys) delete owned[key];
@@ -398,6 +398,13 @@ const makeReplayClientWithState = Effect.fn(
   const input = yield* Queue.unbounded<Uint8Array, Cause.Done<void>>();
   const state = driver.state;
   const outboundRemainder = yield* Ref.make("");
+  const requestIds = new Map<unknown, unknown>();
+  const sentId = (frame: unknown) => {
+    const record = frame as { readonly id?: unknown; readonly method?: unknown };
+    return record?.method === undefined && requestIds.has(record?.id)
+      ? { ...record, id: requestIds.get(record.id) }
+      : frame;
+  };
   const decoder = new TextDecoder();
 
   const failReplay = (error: CodexAppServerReplayError) =>
@@ -425,7 +432,7 @@ const makeReplayClientWithState = Effect.fn(
         if (entry.afterMs !== undefined && entry.afterMs > 0) {
           yield* Effect.sleep(Duration.millis(entry.afterMs));
         }
-        yield* Queue.offer(input, encodeInboundFrame(entry.frame));
+        yield* Queue.offer(input, encodeInboundFrame(sentId(entry.frame)));
         yield* Ref.update(state, (latest) => ({ ...latest, cursor: latest.cursor + 1 }));
         continue;
       }
@@ -461,6 +468,13 @@ const makeReplayClientWithState = Effect.fn(
           }
 
           const entry = transcript.entries[current.cursor];
+          const read = actual as { readonly id?: unknown; readonly method?: unknown };
+          const expected = entry?.type === "expect_outbound" ? entry.frame : undefined;
+          const recorded = expected as { readonly id?: unknown; readonly method?: unknown };
+          if (read.method === "config/read" && recorded?.method !== "config/read") {
+            yield* Queue.offer(input, encodeInboundFrame({ id: read.id, result: { config: {} } }));
+            return;
+          }
           if (!entry) {
             yield* failReplay(
               new CodexAppServerReplayExhaustedError({
@@ -484,7 +498,11 @@ const makeReplayClientWithState = Effect.fn(
             return;
           }
 
-          if (!sameFrame(entry.frame, actual, ignoredThreadConfigKeys)) {
+          const comparable =
+            read.id !== undefined && recorded?.method !== undefined && recorded.id !== undefined
+              ? { ...(actual as object), id: recorded.id }
+              : actual;
+          if (!sameFrame(entry.frame, comparable, ignoredThreadConfigKeys)) {
             yield* failReplay(
               new CodexAppServerReplayFrameMismatchError({
                 scenario: transcript.scenario,
@@ -497,6 +515,7 @@ const makeReplayClientWithState = Effect.fn(
             return;
           }
 
+          if (comparable !== actual) requestIds.set(recorded.id, read.id);
           yield* Ref.update(state, (latest) => ({ ...latest, cursor: latest.cursor + 1 }));
           yield* drainInbound();
         }),

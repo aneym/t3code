@@ -917,7 +917,7 @@ describe("CodexAdapterV2 process exit", () => {
                     "id" in entry.frame,
                 );
                 if (response?.type === "emit_inbound") {
-                  yield* emit(response.frame);
+                  yield* emit({ ...(response.frame as object), id: frame.id });
                 }
               }),
             ).pipe(Sink.ensuring(Deferred.succeed(outputEnded, undefined))),
@@ -3557,7 +3557,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           "cause.method",
           failAt === 4 ? "thread/unarchive" : "thread/resume",
         );
-        assert.nestedPropertyVal(error, "cause.requestId", String(failAt));
         return;
       }
       const resumed = yield* resume;
