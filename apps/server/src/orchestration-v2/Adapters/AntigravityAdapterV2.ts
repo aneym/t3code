@@ -21,12 +21,14 @@ import type { AntigravityAuth } from "../../provider/AntigravityAuth.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   antigravityAppendsSystemPrompt,
+  antigravityModelOptions,
   antigravityPermissionMode,
   antigravityRuntimeModeForSessionMode,
   applyAntigravityAcpModelSelection,
   buildAntigravityPrompt,
   type AntigravityAcpRuntimeInput,
 } from "../../provider/acp/AntigravityAcpSupport.ts";
+import { neonEffortModel } from "../../provider/acp/AntigravityNeonEffort.ts";
 import {
   ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
   antigravitySubagentLaunches,
@@ -275,10 +277,17 @@ export function makeAntigravityAcpAdapterFlavor(
       modelSelection,
     }) {
       const defaultModel = yield* options.defaultModel;
+      const model =
+        modelSelection.model === ANTIGRAVITY_DEFAULT_MODEL ? undefined : modelSelection.model;
+      const available = antigravityModelOptions(yield* runtime.getConfigOptions);
       return yield* applyAntigravityAcpModelSelection({
         runtime,
         model:
-          modelSelection.model === ANTIGRAVITY_DEFAULT_MODEL ? undefined : modelSelection.model,
+          neonEffortModel(
+            model ?? defaultModel,
+            modelSelection,
+            new Set(available.map(({ value }) => value)),
+          ) ?? model,
         defaultModel,
         mapError: (cause) => cause,
       });
