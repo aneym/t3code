@@ -23,6 +23,8 @@ const FALLBACK_CHAIN_FILE = "model-fallback-chain.json";
 
 const QUOTA_NOTICE =
   /^\W{0,4}(individual quota reached|rate limit exceeded until|you have reached your [\w\s]{0,40}quota|resource_exhausted)/i;
+const QUOTA_TAIL =
+  /\n\W{0,4}(individual quota reached\.[^\n]{0,200}resets in (\d+[hms])+\.?|rate limit exceeded until \S+ \(in \d+s\))\s*$/i;
 const MAX_NOTICE_CHARS = 600;
 const HANDLED_LIMIT = 2_000;
 
@@ -78,14 +80,10 @@ function endedOnUsageLimit(runId: OrchestrationV2Run["id"], items: Items): boole
   ) {
     return true;
   }
-  const replies = own.filter((item) => item.type === "assistant_message");
-  const last = replies.at(-1);
-  return (
-    last !== undefined &&
-    last.type === "assistant_message" &&
-    last.text.length <= MAX_NOTICE_CHARS &&
-    QUOTA_NOTICE.test(last.text.trim())
-  );
+  const last = own.filter((item) => item.type === "assistant_message").at(-1);
+  if (last === undefined || last.type !== "assistant_message") return false;
+  const text = last.text.trim();
+  return (text.length <= MAX_NOTICE_CHARS && QUOTA_NOTICE.test(text)) || QUOTA_TAIL.test(last.text);
 }
 
 const fallbackNotice = (from: FallbackStep, to: FallbackStep) =>
