@@ -98,6 +98,9 @@ export const AgentPlacementProviders = Schema.Array(
 
 const GIB = 1024 * 1024 * 1024;
 const UNKNOWN_RATIO = 0.1;
+const MIN_DISK_SATURATION_BYTES = 50 * GIB;
+const MAX_DISK_SATURATION_BYTES = 100 * GIB;
+const DISK_SATURATION_MULTIPLIER = 5;
 const percent = (ratio: number) => `${Math.round(ratio * 100)}%`;
 const pressure = (value: number) => `${Number(value.toFixed(2))}%`;
 
@@ -207,8 +210,16 @@ export function scoreAgentPlacement(input: {
   const full = room === undefined ? undefined : agentPlacementRoomFull(input.label, room);
   if (full !== undefined) return skip(full);
   const totalDiskBytes = resources.totalDiskBytes ?? 0;
+  const diskSaturationBytes = Math.min(
+    MAX_DISK_SATURATION_BYTES,
+    Math.max(MIN_DISK_SATURATION_BYTES, line.minFreeDiskBytes * DISK_SATURATION_MULTIPLIER),
+  );
+  const diskDenominator =
+    totalDiskBytes > 0 ? Math.min(totalDiskBytes, diskSaturationBytes) : diskSaturationBytes;
   const diskRatio =
-    freeDiskBytes !== null && totalDiskBytes > 0 ? freeDiskBytes / totalDiskBytes : null;
+    freeDiskBytes !== null && totalDiskBytes > 0
+      ? Math.min(1, freeDiskBytes / diskDenominator)
+      : null;
   const cpuLine = cpuPressureLine(resources, line);
   const unknown = [
     ...(cpuLine === undefined && loadPerCore === null ? ["load average"] : []),
