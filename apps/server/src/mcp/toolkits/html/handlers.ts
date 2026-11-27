@@ -2,6 +2,7 @@ import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import * as HtmlRender from "../../../htmlRender/HtmlRender.ts";
+import { HtmlRenderTimeline } from "../../../htmlRender/HtmlRenderTimeline.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { loadCaller } from "../../threadAccess.ts";
@@ -72,14 +73,28 @@ const handlers = {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const { thread } = yield* McpInvocationContext.requireThreadScope(scope, "html_render");
       const htmlRender = yield* HtmlRender.HtmlRender;
-      const source = yield* pageSource(input);
-      const reference = yield* htmlRender
-        .publish({ ...source, threadId: thread.threadId, title: input.title, height: input.height })
-        .pipe(Effect.mapError(toFailure));
+      const timeline = yield* HtmlRenderTimeline;
+      const invocation = yield* timeline?.begin(thread) ?? Effect.undefined;
+      const reference = yield* pageSource(input).pipe(
+        Effect.flatMap((source) =>
+          htmlRender
+            .publish({
+              ...source,
+              threadId: thread.threadId,
+              title: input.title,
+              height: input.height,
+            })
+            .pipe(Effect.mapError(toFailure)),
+        ),
+        Effect.tap((page) => invocation?.attach(page) ?? Effect.void),
+        Effect.tapError(() => invocation?.reportFailure.pipe(Effect.ignore) ?? Effect.void),
+      );
       return {
         htmlRender: reference,
         message:
-          "Shown to the reader above your reply. Don't mention or describe the page; reply with only what it doesn't already say.",
+          invocation === undefined
+            ? "Shown to the reader above your reply. Don't mention or describe the page; reply with only what it doesn't already say."
+            : "Attached to this chat. Don't restate the page; reply with only what it doesn't already say.",
       };
     }),
   ),

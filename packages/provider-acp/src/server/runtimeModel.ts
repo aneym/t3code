@@ -1087,11 +1087,6 @@ const T3_MCP_TITLE_CALL =
 const T3_MCP_TITLE_SUFFIX_CALL =
   /^(?<tool>[A-Za-z0-9][A-Za-z0-9_.-]*?)(?: \(t3[-_ ]?code MCP Server\)(?::|$)|[-_.]t3[-_ ]?code$)/i;
 
-/**
- * glm and Kimi use bare names; Antigravity uses "Running <tool>". Kimi appends
- * streamed JSON arguments. Require a name or JSON opening brace so built-ins
- * titled "<tool>: <description>" cannot impersonate an inventory entry.
- */
 const T3_MCP_BARE_TITLE_CALL = /^(?:Running )?(?<tool>[A-Za-z0-9_]+)(?::\s*\{|$)/;
 
 /** ACP lacks typed MCP calls; recognize provider metadata and terminal fallback commands. */
@@ -1186,7 +1181,7 @@ export function extractMcpToolCallIdentity(
     if (qualified?.[1] && qualified[2] && !/^t3[-_ ]?code$/i.test(qualified[1]))
       return { server: qualified[1], tool: qualified[2] };
     const match =
-      T3_MCP_TITLE_CALL.exec(trimmed) ??
+      T3_MCP_TITLE_CALL.exec(trimmed.replace(/^Run(?:ning)? (?=mcp[-_]{1,2})/i, "")) ??
       T3_MCP_TITLE_SUFFIX_CALL.exec(trimmed) ??
       T3_MCP_BARE_TITLE_CALL.exec(trimmed);
     const candidateTool = match?.groups?.tool;

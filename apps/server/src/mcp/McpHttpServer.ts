@@ -42,6 +42,9 @@ import { layerOwnerCliTools } from "./mcpServer/ownerCliTools.ts";
 import * as ServerDatabase from "../serverDatabase/ServerDatabase.ts";
 import * as ChatThreadSets from "../chatSession/ChatThreadSets.ts";
 import * as OwnerCliCredentialPublisher from "../auth/OwnerCliCredentialPublisher.ts";
+import * as McpOAuth from "../auth/McpOAuth.ts";
+import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 
 export const layerHtmlToolkit = Layer.mergeAll(
   toolkitRegistration(HtmlRenderToolkit, HtmlHandlers.layerRender),
@@ -131,7 +134,7 @@ export const layerTools = Layer.mergeAll(
   layerHtmlToolkit,
 );
 
-export const layer = Layer.merge(
+const layer = Layer.merge(
   layerMcpTransport(
     Layer.mergeAll(
       layerTools,
@@ -142,4 +145,10 @@ export const layer = Layer.merge(
     ),
   ),
   OwnerCliCredentialPublisher.layer,
+);
+
+export const layerProduction = layer.pipe(
+  Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
+  Layer.provide(McpOAuth.layerMcpClientAuthenticator),
+  Layer.provide(RuntimeLayer.layerHtmlRenderTimeline),
 );

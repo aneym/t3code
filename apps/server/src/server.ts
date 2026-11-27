@@ -116,7 +116,6 @@ import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
 import * as ProviderInstallation from "./provider/providerInstallation.ts";
 import * as ProviderInstallationGate from "./provider/ProviderInstallationGate.ts";
-import * as ProviderAdapterRegistry from "./orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   layerProviderInstallationRefresh,
   layerProviderInstallations,
@@ -794,10 +793,7 @@ const layerMakeRoutes = Layer.mergeAll(
     Ws.layer,
     speechStreamRouteLayer,
   ),
-  McpHttpServer.layer.pipe(
-    Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
-    Layer.provide(McpOAuth.layerMcpClientAuthenticator),
-  ),
+  McpHttpServer.layerProduction,
   // Follows delegated tasks running in linked environments, including after a restart.
   Layer.effectDiscard(AgentRouting.start),
 ).pipe(
