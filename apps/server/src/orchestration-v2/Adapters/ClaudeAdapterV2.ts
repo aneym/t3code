@@ -1,5 +1,6 @@
 import { readClaudeTranscriptState } from "./ClaudeTranscriptAvailability.ts";
 import * as DocumentText from "../../provider/DocumentText.ts";
+import { poolFailureDetail } from "../../provider/poolExhaustion.ts";
 import {
   compactDynamicToolOutput,
   mcpToolResultOutput,
@@ -4288,6 +4289,7 @@ function providerFailureFromResult(
   receivedAt: DateTime.Utc,
   failureHint?: string,
   usageLimited = false,
+  assistantError?: string | null,
 ): OrchestrationV2ProviderFailure | null {
   const gatewayResetAt =
     failureHint === undefined &&
@@ -4311,11 +4313,20 @@ function providerFailureFromResult(
       resetAt: gatewayResetAt,
     });
   }
+  const listedError = resultUserFacingError(message);
+  const pool = poolFailureDetail(
+    [message.subtype === "success" ? message.result : undefined, listedError, assistantError]
+      .filter(Boolean)
+      .join("\n"),
+    message.subtype === "success" ? (message.api_error_status ?? null) : null,
+    DateTime.toEpochMillis(receivedAt),
+  );
   const failureClass =
-    (message.subtype === "success" && message.api_error_status === 429) || usageLimited
+    (message.subtype === "success" && message.api_error_status === 429) ||
+    pool !== undefined ||
+    usageLimited
       ? "usage_limit"
       : "provider_error";
-  const listedError = resultUserFacingError(message);
   const apiErrorMessage =
     message.subtype === "success" &&
     message.terminal_reason === "api_error" &&
@@ -4329,9 +4340,10 @@ function providerFailureFromResult(
       : terminalResultError(message.terminal_reason, failureHint ?? apiErrorMessage);
   if (message.subtype !== "success") {
     return makeProviderFailure({
-      message: listedError ?? structuredError ?? message.errors.join("\n"),
+      message: pool?.message ?? listedError ?? structuredError ?? message.errors.join("\n"),
       code: message.subtype,
       class: failureClass,
+      resetAt: pool?.resetAt ?? null,
     });
   }
   if (!message.is_error && structuredError === undefined) {
@@ -4347,14 +4359,14 @@ function providerFailureFromResult(
         )
       : undefined;
   return makeProviderFailure({
-    message: listedError ?? structuredError ?? failureHint ?? message.result,
+    message: pool?.message ?? listedError ?? structuredError ?? failureHint ?? message.result,
     code:
       apiErrorStatus === null
         ? (message.terminal_reason ?? "sdk_result_error")
         : `api_error_${apiErrorStatus}`,
     class: failureClass,
     retryable: apiErrorStatus === 429 || apiErrorStatus === 529 ? true : null,
-    resetAt: resetAt ?? null,
+    resetAt: pool?.resetAt ?? resetAt ?? null,
   });
 }
 
@@ -4586,6 +4598,7 @@ interface ActiveClaudeTurnContext {
     readonly type: string | null;
     readonly resetAt: string | null;
   } | null;
+  latestAssistantApiError: string | null;
   compactionFailure: { readonly message: string | undefined; readonly count: number } | null;
   // Steers end segments whose usage is excluded from the final result; bill them too, oldest first.
   readonly steeredSegmentUsage: Array<SDKResultMessage["usage"]>;
@@ -10073,6 +10086,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               context.nativeMessageCursor = message.uuid;
               context.latestAssistantRateLimit =
                 message.error === "rate_limit" ? { type: null, resetAt: null } : null;
+              context.latestAssistantApiError =
+                message.message.model === "<synthetic>"
+                  ? textFromClaudeContent(message.message.content)
+                  : null;
               if (message.error === "rate_limit" && isClaudeBlockedAssistantRateLimit(message)) {
                 const info = message.api_error_params.rate_limit_info;
                 const overageAllowed =
@@ -11076,10 +11093,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     bufferedResultArrivals.get(message) ?? completedAt,
                     failureHint,
                     usageLimited,
+                    context.latestAssistantApiError,
                   );
             const terminalFailure =
               resultFailure?.class === "usage_limit"
-                ? { ...resultFailure, resetAt: resetAt ?? resultFailure.resetAt ?? null }
+                ? { ...resultFailure, resetAt: resultFailure.resetAt ?? resetAt }
                 : resultFailure;
             yield* finalizeActiveTurn({
               context,
@@ -12349,6 +12367,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               rejectedRateLimitTypes: new Set(),
               rateLimitResetTimes: new Map(),
               latestAssistantRateLimit: null,
+              latestAssistantApiError: null,
               compactionFailure: null,
               steeredSegmentUsage: [],
               steersClosed: false,

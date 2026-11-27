@@ -21,6 +21,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { MessageSender } from "./messageSender.ts";
+import { OrchestrationV2RunFallback } from "./orchestrationV2RunFallback.ts";
 import {
   OrchestrationV2RestartCancelledBackgroundWork,
   OrchestrationV2RunBackgroundWorkCancelled,
@@ -724,8 +725,8 @@ export const OrchestrationV2Run = Schema.Struct({
   ),
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
   workspacePreparation: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
-  /** Starts a new provider conversation; earlier runs stay visible but never reach the provider. */
   freshContext: Schema.optional(Schema.Boolean),
+  fallback: Schema.optional(OrchestrationV2RunFallback),
   ...ReportedOutcomeFields,
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
@@ -3220,7 +3221,6 @@ export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("message.dispatch"),
     notification: Schema.optional(OrchestrationV2Notification),
-    /** Sends this pending guest message; the server uses the guest's text, not `text`. */
     guestMessageId: Schema.optional(GuestMessageId),
     ...OrchestrationV2CreationFields,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
@@ -3244,6 +3244,7 @@ export const OrchestrationV2Command = Schema.Union([
     steerFollowUpAfterRunOrdinal: Schema.optional(NonNegativeInt),
     steerDropped: Schema.optional(Schema.Boolean),
     usageLimitRecoveryRequestId: Schema.optional(CommandId),
+    fallback: Schema.optional(OrchestrationV2RunFallback),
     deliveryIntent: Schema.optional(Schema.Literals(["auto", "steer", "restart"])),
     delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionRef),
     dispatchMode: Schema.Union([
