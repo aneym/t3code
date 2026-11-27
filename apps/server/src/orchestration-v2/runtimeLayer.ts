@@ -446,7 +446,13 @@ export const layerProduction = Layer.mergeAll(
     ),
   ),
   BlockedQueueWakeWorker.layer.pipe(
-    Layer.provide(Layer.mergeAll(layerProjectionStore, layerThreadManagementProvided)),
+    Layer.provide(
+      Layer.mergeAll(
+        layerProjectionStore,
+        layerThreadManagementProvided,
+        layerOrchestratorProvided,
+      ),
+    ),
   ),
   UsageLimitRoomWorker.layer.pipe(Layer.provide(layerThreadManagementProvided)),
   layerDelegatedChildStartGateProvided,
