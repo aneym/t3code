@@ -9,16 +9,22 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import type { McpEventsServer } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 import * as HttpBody from "effect/http/HttpBody";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Schema from "effect/Schema";
 
 import { credentialValues, redact, redactTokens } from "./secretText.ts";
 
-const PROTOCOL_VERSION = "2025-06-18";
+const LEGACY_VERSION = "2025-06-18";
+const BETA_VERSION = "2026-07-28";
+const EXTENSION = "io.modelcontextprotocol/events";
 const HEADER_DIR = NodePath.join(NodeOS.homedir(), ".config", "t3-mcp-events");
 const CALL_TIMEOUT = Duration.seconds(45);
 
@@ -35,13 +41,23 @@ interface RpcMessage {
   readonly id?: number | string | null;
   readonly result?: unknown;
   readonly error?: { readonly code?: number; readonly message?: string; readonly data?: unknown };
+  readonly method?: string;
+  readonly params?: unknown;
 }
 
+const clientInfo = { name: "t3code-mcp-events", version: "1" };
+const capabilities = { extensions: { [EXTENSION]: {} } };
 const initializeParams = {
-  protocolVersion: PROTOCOL_VERSION,
-  capabilities: { extensions: { "io.modelcontextprotocol/events": {} } },
-  clientInfo: { name: "t3code-mcp-events", version: "1" },
+  protocolVersion: LEGACY_VERSION,
+  capabilities,
+  clientInfo,
 };
+const betaMeta = {
+  "io.modelcontextprotocol/protocolVersion": BETA_VERSION,
+  "io.modelcontextprotocol/clientInfo": clientInfo,
+  "io.modelcontextprotocol/clientCapabilities": capabilities,
+};
+const discover = { jsonrpc: "2.0", id: 0, method: "server/discover", params: { _meta: betaMeta } };
 
 export function serverKey(server: McpEventsServer): string {
   return "url" in server
@@ -157,15 +173,50 @@ const readHeaderFile = (path: string) =>
     }),
   );
 
-const callHttp = Effect.fn("McpEvents.callHttp")(function* (
+function supportsBeta(result: unknown): boolean {
+  const versions = asRecord(result).supportedVersions;
+  return Array.isArray(versions) && versions.includes(BETA_VERSION);
+}
+
+function checkExtension(result: unknown) {
+  const extensions = asRecord(asRecord(asRecord(result).capabilities).extensions);
+  return Object.hasOwn(extensions, EXTENSION)
+    ? undefined
+    : new McpEventsRpcError({ message: "Server does not advertise MCP Events.", code: -32601 });
+}
+
+const request = (method: string, params: unknown, beta: boolean) => ({
+  jsonrpc: "2.0",
+  id: 2,
+  method,
+  params: beta
+    ? { ...asRecord(params), _meta: { ...asRecord(asRecord(params)._meta), ...betaMeta } }
+    : params,
+});
+
+const headerValue = (name: string) =>
+  /^[\x20-\x7e]+$/.test(name) && name === name.trim() && !/^=\?base64\?.*\?=$/.test(name)
+    ? name
+    : `=?base64?${Buffer.from(name, "utf8").toString("base64")}?=`;
+
+const httpMessages = Effect.fn("McpEvents.httpMessages")(function* (
   server: Extract<McpEventsServer, { readonly url: string }>,
   method: string,
   params: unknown,
 ) {
+  if (
+    ["events/poll", "events/stream", "events/subscribe", "events/unsubscribe"].includes(method) &&
+    typeof asRecord(params).name !== "string"
+  ) {
+    return yield* new McpEventsRpcError({ message: `${method} requires an event name.` });
+  }
   const http = yield* HttpClient.HttpClient;
   const fileHeaders =
     server.headersFile === undefined ? {} : yield* readHeaderFile(server.headersFile);
-  const post = (body: unknown, extra: Record<string, string>) =>
+  const post = (
+    body: { jsonrpc: string; id?: number; method: string; params?: unknown },
+    extra: Record<string, string>,
+  ) =>
     http
       .execute(
         HttpClientRequest.post(server.url).pipe(
@@ -173,136 +224,199 @@ const callHttp = Effect.fn("McpEvents.callHttp")(function* (
             ...fileHeaders,
             accept: "application/json, text/event-stream",
             ...extra,
+            "mcp-method": body.method,
+            ...(typeof asRecord(body.params).name === "string"
+              ? { "mcp-name": headerValue(asRecord(body.params).name as string) }
+              : {}),
           }),
           HttpClientRequest.setBody(HttpBody.text(JSON.stringify(body), "application/json")),
         ),
       )
       .pipe(
-        Effect.flatMap((response) =>
-          response.text.pipe(
-            Effect.map((text) => ({
-              status: response.status,
-              headers: response.headers,
-              messages: parseMessages(text, response.headers["content-type"]),
-            })),
-          ),
-        ),
         Effect.mapError(
           () => new McpEventsRpcError({ message: `Could not reach ${serverLabel(server)}.` }),
         ),
       );
-  const init = yield* post(
-    { jsonrpc: "2.0", id: 1, method: "initialize", params: initializeParams },
-    {},
+  const read = (response: HttpClientResponse.HttpClientResponse) =>
+    response.text.pipe(
+      Effect.map((text) => parseMessages(text, response.headers["content-type"])),
+      Effect.mapError(
+        () => new McpEventsRpcError({ message: `Could not read ${serverLabel(server)} reply.` }),
+      ),
+    );
+  const betaHeaders = { "mcp-protocol-version": BETA_VERSION };
+  const discovery = yield* post(discover, betaHeaders).pipe(
+    Effect.flatMap(read),
+    Effect.map((messages) => messages.find((message) => message.id === 0)?.result),
+    Effect.timeout("5 seconds"),
+    Effect.orElseSucceed(() => undefined),
   );
-  if (init.status >= 400) {
-    return yield* new McpEventsRpcError({
-      message: `${serverLabel(server)} refused initialize (HTTP ${init.status}).`,
-    });
+  let response;
+  if (supportsBeta(discovery)) {
+    const failure = checkExtension(discovery);
+    if (failure !== undefined) return yield* failure;
+    response = yield* post(request(method, params, true), betaHeaders);
+  } else {
+    const init = yield* post(
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: initializeParams },
+      {},
+    );
+    if (init.status >= 400) {
+      return yield* new McpEventsRpcError({
+        message: `${serverLabel(server)} refused initialize (HTTP ${init.status}).`,
+      });
+    }
+    const messages = yield* read(init);
+    const answer = messages.find((message) => message.id === 1);
+    if (answer === undefined)
+      return yield* new McpEventsRpcError({ message: "No initialize reply." });
+    const initFailure = rpcFailure(answer, "initialize", paramsCredentials(params));
+    if (initFailure) return yield* initFailure;
+    const sessionId = init.headers["mcp-session-id"];
+    const session: Record<string, string> = {
+      "mcp-protocol-version":
+        typeof asRecord(answer.result).protocolVersion === "string"
+          ? (asRecord(answer.result).protocolVersion as string)
+          : LEGACY_VERSION,
+      ...(sessionId === undefined ? {} : { "mcp-session-id": sessionId }),
+    };
+    yield* post({ jsonrpc: "2.0", method: "notifications/initialized" }, session);
+    response = yield* post(request(method, params, false), session);
   }
-  const initFailure =
-    init.messages[0] && rpcFailure(init.messages[0], "initialize", paramsCredentials(params));
-  if (initFailure) return yield* initFailure;
-  const sessionId = init.headers["mcp-session-id"];
-  const session: Record<string, string> = {
-    "mcp-protocol-version": PROTOCOL_VERSION,
-    ...(sessionId === undefined ? {} : { "mcp-session-id": sessionId }),
-  };
-  yield* post({ jsonrpc: "2.0", method: "notifications/initialized" }, session);
-  const response = yield* post({ jsonrpc: "2.0", id: 2, method, params }, session);
-  const message = response.messages.find((candidate) => candidate.id === 2);
-  if (message === undefined) {
+  if (response.headers["content-type"]?.includes("text/event-stream")) {
+    let data: string[] = [];
+    return response.stream.pipe(
+      Stream.decodeText,
+      Stream.splitLines,
+      Stream.flatMap((line) => {
+        if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, ""));
+        if (line !== "" || data.length === 0) return Stream.empty;
+        const messages = parseMessages(data.join("\n"), undefined);
+        data = [];
+        return Stream.fromIterable(messages);
+      }),
+      Stream.mapError(() => new McpEventsRpcError({ message: `${method} stream disconnected.` })),
+    );
+  }
+  const messages = yield* read(response);
+  if (messages.length === 0)
     return yield* new McpEventsRpcError({
       message: `${method} got no JSON-RPC answer (HTTP ${response.status}).`,
     });
-  }
-  const failure = rpcFailure(message, method, paramsCredentials(params));
-  if (failure) return yield* failure;
-  return message.result;
+  return Stream.fromIterable(messages);
 });
 
-const callStdio = (
+const stdioMessages = (
   server: Extract<McpEventsServer, { readonly command: string }>,
   method: string,
   params: unknown,
 ) =>
-  Effect.callback<unknown, McpEventsRpcError>((resume) => {
-    const child = NodeChildProcess.spawn(server.command, [...(server.args ?? [])], {
-      stdio: ["pipe", "pipe", "ignore"],
-    });
-    let buffer = "";
-    let done = false;
-    const finish = (effect: Effect.Effect<unknown, McpEventsRpcError>) => {
-      if (done) return;
-      done = true;
-      child.stdin.end();
-      child.kill();
-      resume(effect);
-    };
-    const send = (message: unknown) => {
-      if (!done && child.stdin.writable) child.stdin.write(`${JSON.stringify(message)}\n`);
-    };
-    child.stdin.on("error", () =>
-      finish(
-        Effect.fail(new McpEventsRpcError({ message: `${serverLabel(server)} closed its input.` })),
-      ),
-    );
-    child.on("error", () =>
-      finish(
-        Effect.fail(new McpEventsRpcError({ message: `Could not start ${serverLabel(server)}.` })),
-      ),
-    );
-    child.on("exit", () =>
-      finish(
-        Effect.fail(
-          new McpEventsRpcError({ message: `${serverLabel(server)} exited before answering.` }),
-        ),
-      ),
-    );
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      try {
-        onData(chunk);
-      } catch {
-        finish(
-          Effect.fail(
-            new McpEventsRpcError({ message: `${serverLabel(server)} sent a bad reply.` }),
-          ),
+  Stream.callback<RpcMessage, McpEventsRpcError>((queue) =>
+    Effect.acquireRelease(
+      Effect.sync(() => {
+        const child = NodeChildProcess.spawn(server.command, [...(server.args ?? [])], {
+          stdio: ["pipe", "pipe", "ignore"],
+        });
+        let buffer = "";
+        let done = false;
+        let discovered = false;
+        const finish = (error: McpEventsRpcError) => {
+          if (done) return;
+          done = true;
+          Queue.failCauseUnsafe(queue, Cause.fail(error));
+        };
+        const send = (message: unknown) => {
+          if (!done && child.stdin.writable) child.stdin.write(`${JSON.stringify(message)}\n`);
+        };
+        child.stdin.on("error", () =>
+          finish(new McpEventsRpcError({ message: `${serverLabel(server)} closed its input.` })),
         );
-      }
-    });
-    const onData = (chunk: string) => {
-      buffer += chunk;
-      let newline = buffer.indexOf("\n");
-      while (newline !== -1) {
-        const line = buffer.slice(0, newline);
-        buffer = buffer.slice(newline + 1);
-        newline = buffer.indexOf("\n");
-        for (const message of parseMessages(line, undefined)) {
-          if (message.id === 1) {
-            const failure = rpcFailure(message, "initialize", paramsCredentials(params));
-            if (failure) return finish(Effect.fail(failure));
-            send({ jsonrpc: "2.0", method: "notifications/initialized" });
-            send({ jsonrpc: "2.0", id: 2, method, params });
-          } else if (message.id === 2) {
-            const failure = rpcFailure(message, method, paramsCredentials(params));
-            return finish(failure ? Effect.fail(failure) : Effect.succeed(message.result));
+        child.on("error", () =>
+          finish(new McpEventsRpcError({ message: `Could not start ${serverLabel(server)}.` })),
+        );
+        child.on("exit", () =>
+          finish(new McpEventsRpcError({ message: `${serverLabel(server)} exited.` })),
+        );
+        child.stdout.setEncoding("utf8");
+        child.stdout.on("data", (chunk: string) => {
+          try {
+            onData(chunk);
+          } catch {
+            finish(new McpEventsRpcError({ message: `${serverLabel(server)} sent a bad reply.` }));
           }
-        }
-      }
-    };
-    send({ jsonrpc: "2.0", id: 1, method: "initialize", params: initializeParams });
-    return Effect.sync(() => {
-      done = true;
-      child.kill();
-    });
-  });
+        });
+        const onData = (chunk: string) => {
+          buffer += chunk;
+          let newline = buffer.indexOf("\n");
+          while (newline !== -1) {
+            const line = buffer.slice(0, newline);
+            buffer = buffer.slice(newline + 1);
+            newline = buffer.indexOf("\n");
+            for (const message of parseMessages(line, undefined)) {
+              if (message.id === 0 && !discovered) {
+                clearTimeout(probe);
+                if (!supportsBeta(message.result)) startLegacy();
+                else {
+                  discovered = true;
+                  const failure = checkExtension(message.result);
+                  if (failure !== undefined) return finish(failure);
+                  send(request(method, params, true));
+                }
+              } else if (message.id === 1) {
+                const failure = rpcFailure(message, "initialize", paramsCredentials(params));
+                if (failure) return finish(failure);
+                send({ jsonrpc: "2.0", method: "notifications/initialized" });
+                send(request(method, params, false));
+              } else if (message.id === 2 || message.method?.startsWith("notifications/events/"))
+                Queue.offerUnsafe(queue, message);
+            }
+          }
+        };
+        const startLegacy = () => {
+          discovered = true;
+          send({ jsonrpc: "2.0", id: 1, method: "initialize", params: initializeParams });
+        };
+        // @effect-diagnostics-next-line globalTimersInEffect:off -- The timer belongs to the child process callback lifecycle.
+        const probe = setTimeout(startLegacy, 1500);
+        send(discover);
+        return () => {
+          done = true;
+          clearTimeout(probe);
+          child.stdin.end();
+          child.kill();
+        };
+      }),
+      (close) => Effect.sync(close),
+    ),
+  );
+
+const messagesFor = (server: McpEventsServer, method: string, params: unknown) =>
+  "url" in server
+    ? Stream.unwrap(httpMessages(server, method, params))
+    : stdioMessages(server, method, params);
 
 export const callEventsMethod = (server: McpEventsServer, method: string, params: unknown) =>
-  ("url" in server ? callHttp(server, method, params) : callStdio(server, method, params)).pipe(
+  messagesFor(server, method, params).pipe(
+    Stream.filter((message) => message.id === 2),
+    Stream.runHead,
+    Effect.flatMap((answer) => {
+      if (answer._tag === "None")
+        return Effect.fail(new McpEventsRpcError({ message: `${method} got no JSON-RPC answer.` }));
+      const error = rpcFailure(answer.value, method, paramsCredentials(params));
+      return error ? Effect.fail(error) : Effect.succeed(answer.value.result);
+    }),
     Effect.timeoutOrElse({
       duration: CALL_TIMEOUT,
       orElse: () =>
         Effect.fail(new McpEventsRpcError({ message: `${method} timed out.`, reason: "timeout" })),
     }),
+  );
+
+export const streamEvents = (server: McpEventsServer, params: unknown) =>
+  messagesFor(server, "events/stream", params).pipe(
+    Stream.mapEffect((message) => {
+      const error = rpcFailure(message, "events/stream", []);
+      return error ? Effect.fail(error) : Effect.succeed(message);
+    }),
+    Stream.timeout("45 seconds"),
   );

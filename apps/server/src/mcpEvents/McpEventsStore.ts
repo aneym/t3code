@@ -1,4 +1,5 @@
 import {
+  type McpEventsDeliveryMode,
   McpEventsServer,
   type McpEventsSubscription,
   type McpEventsSubscriptionStatus,
@@ -27,6 +28,8 @@ export interface SubscriptionRow {
   readonly deliveries: number;
   readonly created_at: string;
   readonly delivery_url: string | null;
+  readonly cursor: string | null;
+  readonly delivery_mode: McpEventsDeliveryMode;
 }
 
 const decodeServer = Schema.decodeUnknownSync(Schema.fromJsonString(McpEventsServer));
@@ -58,6 +61,8 @@ export function toSubscription(row: SubscriptionRow): McpEventsSubscription {
     lastDeliveryAt: row.last_delivery_at,
     deliveries: row.deliveries,
     createdAt: row.created_at,
+    deliveryMode: row.delivery_mode,
+    cursor: row.cursor,
   };
 }
 
@@ -98,12 +103,15 @@ export const insertPending = Effect.fn("McpEventsStore.insertPending")(function*
   readonly argumentsJson: string;
   readonly tokenHash: string;
   readonly createdAt: string;
+  readonly deliveryMode: SubscriptionRow["delivery_mode"];
+  readonly deliveryUrl: string | null;
 }) {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`INSERT INTO aneym_mcp_events_subscriptions
-    (id, thread_id, server_json, server_key, name, arguments_json, token_hash, status, created_at)
+    (id, thread_id, server_json, server_key, name, arguments_json, token_hash, status, created_at,
+      delivery_mode, delivery_url)
     VALUES (${row.id}, ${row.threadId}, ${row.serverJson}, ${row.serverKey}, ${row.name},
-      ${row.argumentsJson}, ${row.tokenHash}, 'pending', ${row.createdAt})`;
+      ${row.argumentsJson}, ${row.tokenHash}, 'pending', ${row.createdAt}, ${row.deliveryMode}, ${row.deliveryUrl})`;
 });
 
 export const markSubscribed = Effect.fn("McpEventsStore.markSubscribed")(function* (input: {
@@ -111,13 +119,47 @@ export const markSubscribed = Effect.fn("McpEventsStore.markSubscribed")(functio
   readonly remoteId: string | null;
   readonly refreshBefore: string | null;
   readonly subscribedAt: string;
-  readonly deliveryUrl: string;
+  readonly deliveryUrl: string | null;
 }) {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`UPDATE aneym_mcp_events_subscriptions
     SET status = 'active', remote_id = ${input.remoteId}, refresh_before = ${input.refreshBefore},
       subscribed_at = ${input.subscribedAt}, delivery_url = ${input.deliveryUrl}, last_error = NULL
-    WHERE id = ${input.id}`;
+    WHERE id = ${input.id} AND status != 'terminated'`;
+});
+
+export const saveCursor = Effect.fn("McpEventsStore.saveCursor")(function* (
+  id: string,
+  cursor: string | null,
+  gap: boolean,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const note = gap ? "Events may have been skipped: the server reported a gap." : null;
+  yield* sql`UPDATE aneym_mcp_events_subscriptions
+    SET cursor = ${cursor}, last_error = COALESCE(${note}, last_error)
+    WHERE id = ${id} AND status != 'terminated'`;
+});
+
+export const moveThread = Effect.fn("McpEventsStore.moveThread")(function* (
+  from: string,
+  to: string,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`UPDATE aneym_mcp_events_subscriptions SET thread_id = ${to}
+    WHERE thread_id = ${from} AND NOT EXISTS (
+      SELECT 1 FROM aneym_mcp_events_subscriptions AS taken
+      WHERE taken.thread_id = ${to}
+        AND taken.server_key = aneym_mcp_events_subscriptions.server_key
+        AND taken.name = aneym_mcp_events_subscriptions.name
+        AND taken.arguments_json = aneym_mcp_events_subscriptions.arguments_json)`;
+});
+
+export const setDeliveryMode = Effect.fn("McpEventsStore.setDeliveryMode")(function* (
+  id: string,
+  mode: SubscriptionRow["delivery_mode"],
+) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`UPDATE aneym_mcp_events_subscriptions SET delivery_mode = ${mode} WHERE id = ${id}`;
 });
 
 export const markStatus = Effect.fn("McpEventsStore.markStatus")(function* (
@@ -140,8 +182,35 @@ export const updateServer = Effect.fn("McpEventsStore.updateServer")(function* (
 
 export const remove = Effect.fn("McpEventsStore.remove")(function* (id: string) {
   const sql = yield* SqlClient.SqlClient;
-  yield* sql`DELETE FROM aneym_mcp_events_deliveries WHERE subscription_id = ${id}`;
-  yield* sql`DELETE FROM aneym_mcp_events_subscriptions WHERE id = ${id}`;
+  yield* sql.withTransaction(
+    Effect.gen(function* () {
+      yield* sql`DELETE FROM aneym_mcp_events_deliveries WHERE subscription_id = ${id}`;
+      yield* sql`DELETE FROM aneym_mcp_events_webhook_receipts WHERE subscription_id = ${id}`;
+      yield* sql`DELETE FROM aneym_mcp_events_subscriptions WHERE id = ${id}`;
+    }),
+  );
+});
+
+export const hasWebhookReceipt = Effect.fn("McpEventsStore.hasWebhookReceipt")(function* (
+  id: string,
+  webhookId: string,
+  now: number,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql`SELECT 1 FROM aneym_mcp_events_webhook_receipts
+    WHERE subscription_id = ${id} AND webhook_id = ${webhookId} AND received_at > ${now - DELIVERY_RETENTION_MS}`;
+  return rows.length > 0;
+});
+
+export const recordWebhookReceipt = Effect.fn("McpEventsStore.recordWebhookReceipt")(function* (
+  id: string,
+  webhookId: string,
+  now: number,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`DELETE FROM aneym_mcp_events_webhook_receipts WHERE received_at <= ${now - DELIVERY_RETENTION_MS}`;
+  yield* sql`INSERT INTO aneym_mcp_events_webhook_receipts (subscription_id, webhook_id, received_at)
+    VALUES (${id}, ${webhookId}, ${now}) ON CONFLICT (subscription_id, webhook_id) DO NOTHING`;
 });
 
 export const claimDelivery = Effect.fn("McpEventsStore.claimDelivery")(function* (
