@@ -23,6 +23,7 @@ import ChatSessionOwnerThreads from "./ForkMigrations/019_ChatSessionOwnerThread
 import ScheduledTaskUpdatedBy from "./ForkMigrations/020_ScheduledTaskUpdatedBy.ts";
 import McpEventsDeliveryUrl from "./ForkMigrations/021_McpEventsDeliveryUrl.ts";
 import ChatSessionSetUrlGrants from "./ForkMigrations/022_ChatSessionSetUrlGrants.ts";
+import McpEventsBeta from "./ForkMigrations/023_McpEventsBeta.ts";
 
 const run = Migrator.make({});
 const loader = Migrator.fromRecord({
@@ -47,6 +48,7 @@ const loader = Migrator.fromRecord({
   "20_ScheduledTaskUpdatedBy": ScheduledTaskUpdatedBy,
   "21_McpEventsDeliveryUrl": McpEventsDeliveryUrl,
   "22_ChatSessionSetUrlGrants": ChatSessionSetUrlGrants,
+  "23_McpEventsBeta": McpEventsBeta,
 });
 
 export const runForkMigrations = Effect.fn("runForkMigrations")(function* () {

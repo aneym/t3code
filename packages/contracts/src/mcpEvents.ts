@@ -32,6 +32,9 @@ export const McpEventsSubscriptionStatus = Schema.Literals([
 ]);
 export type McpEventsSubscriptionStatus = typeof McpEventsSubscriptionStatus.Type;
 
+export const McpEventsDeliveryMode = Schema.Literals(["webhook", "push", "poll"]);
+export type McpEventsDeliveryMode = typeof McpEventsDeliveryMode.Type;
+
 export const McpEventsSubscription = Schema.Struct({
   id: Schema.String,
   threadId: ThreadId,
@@ -45,6 +48,8 @@ export const McpEventsSubscription = Schema.Struct({
   lastDeliveryAt: Schema.NullOr(Schema.String),
   deliveries: Schema.Int,
   createdAt: Schema.String,
+  deliveryMode: Schema.optional(McpEventsDeliveryMode),
+  cursor: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type McpEventsSubscription = typeof McpEventsSubscription.Type;
 

@@ -18,6 +18,7 @@ import * as NodeOS from "node:os";
 import * as Path from "effect/Path";
 import * as Equal from "effect/Equal";
 import * as DateTime from "effect/DateTime";
+import { McpEventsService } from "../mcpEvents/McpEventsService.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
@@ -57,6 +58,7 @@ export const layer = Layer.effect(
     const environment = yield* ServerEnvironment;
     const threads = yield* ThreadManagementService;
     const scheduledTasks = yield* ScheduledTaskService;
+    const mcpEvents = yield* McpEventsService;
     const settings = yield* ServerSettingsService;
     const crypto = yield* SecureRandom.SecureRandom;
     const laneIndex = createLaneIndex(path.join(root, "..", "lanes"), NodeOS.hostname());
@@ -297,6 +299,22 @@ export const layer = Layer.effect(
                 cause,
               }),
           });
+          if (
+            home.binding !== null &&
+            threadId !== null &&
+            home.binding.threadId !== threadId &&
+            (home.binding.environmentId === null ||
+              home.binding.environmentId === descriptor.environmentId) &&
+            environmentId === descriptor.environmentId
+          ) {
+            yield* mcpEvents.moveThreadSubscriptions(home.binding.threadId, threadId).pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("Unable to move MCP event subscriptions", {
+                  message: error.message,
+                }),
+              ),
+            );
+          }
           if (threadId !== null) {
             const previous = home.binding;
             const warn = Effect.catch((error: { readonly message: string }) =>
