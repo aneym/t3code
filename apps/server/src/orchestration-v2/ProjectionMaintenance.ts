@@ -1,9 +1,13 @@
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -43,6 +47,7 @@ const RETAINED_EVENT_HISTORY = Duration.days(1);
 // Small pages bound work on the reader worker and synchronous fallback.
 const PAGE_SIZE = 50;
 const REFERENCE_SCAN_WINDOW = 1000;
+const PRUNE_HOLD_FILE = "event-prune-hold";
 
 type MetadataRow = {
   readonly projection_name: string;
@@ -54,6 +59,8 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
   ProjectionMaintenanceV2,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
 
     const writeMetadata = (name: string, sequence: number, at: DateTime.Utc) => sql`
       INSERT INTO orchestration_v2_projection_metadata (
@@ -252,10 +259,41 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
       return { deletedEventCount, deletedReceiptCount };
     });
 
+    const pruneHold = Effect.gen(function* () {
+      const databases = yield* sql<{ readonly name: string; readonly file: string }>`
+        PRAGMA database_list
+      `;
+      const file = databases.find((row) => row.name === "main")?.file ?? "";
+      if (file === "") return undefined;
+      const hold = path.join(path.dirname(path.dirname(file)), PRUNE_HOLD_FILE);
+      const missing = yield* fs.stat(hold).pipe(
+        Effect.as(false),
+        Effect.catchTags({
+          PlatformError: (error) => Effect.succeed(error.reason._tag === "NotFound"),
+        }),
+      );
+      return missing ? undefined : hold;
+    });
+
+    const reclaimable = Effect.gen(function* () {
+      const freelistRows = yield* sql<{ readonly freelist_count: number }>`PRAGMA freelist_count`;
+      const pageSizeRows = yield* sql<{ readonly page_size: number }>`PRAGMA page_size`;
+      return (freelistRows[0]?.freelist_count ?? 0) * (pageSizeRows[0]?.page_size ?? 0);
+    });
+
     // A pass prunes through the mark the previous pass left once that mark is a day old, so
     // at least RETAINED_EVENT_HISTORY of events always remains. Receipts stay for idempotency.
     const pruneEventStore = Effect.fn("ProjectionMaintenance.pruneEventStore")(
       function* (betweenPages: Effect.Effect<void> = Effect.void) {
+        const hold = yield* pruneHold;
+        if (hold !== undefined) {
+          yield* Effect.logWarning("Event store pruning is held", { hold });
+          return {
+            deletedEventCount: 0,
+            deletedReceiptCount: 0,
+            reclaimableBytes: yield* reclaimable,
+          };
+        }
         const now = yield* DateTime.now;
         const metadata = yield* sql<MetadataRow>`
           SELECT projection_name, last_sequence, updated_at
@@ -298,15 +336,10 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
         );
         deletedEventCount += legacy.deletedEventCount;
 
-        const freelistRows = yield* sql<{ readonly freelist_count: number }>`PRAGMA freelist_count`;
-        const pageSizeRows = yield* sql<{ readonly page_size: number }>`PRAGMA page_size`;
-        const reclaimableBytes =
-          (freelistRows[0]?.freelist_count ?? 0) * (pageSizeRows[0]?.page_size ?? 0);
-
         return {
           deletedEventCount,
           deletedReceiptCount: legacy.deletedReceiptCount,
-          reclaimableBytes,
+          reclaimableBytes: yield* reclaimable,
         };
       },
       Effect.mapError(
@@ -316,4 +349,4 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
 
     return ProjectionMaintenanceV2.of({ pruneEventStore });
   }),
-);
+).pipe(Layer.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)));
