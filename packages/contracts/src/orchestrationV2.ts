@@ -698,6 +698,9 @@ export const OrchestrationV2Run = Schema.Struct({
   retainBlockedCompletionHolds: Schema.optional(Schema.Boolean),
   steerWhenReadyRunId: Schema.optional(RunId),
   steerWhenReadyAtBoundary: Schema.optional(Schema.Boolean),
+  steerWhenReadyModeLimit: Schema.optional(
+    Schema.Struct({ runtimeMode: RuntimeMode, interactionMode: ProviderInteractionMode }),
+  ),
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),

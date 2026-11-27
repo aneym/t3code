@@ -62,7 +62,9 @@ const configure = Effect.fn("ThreadConfigurationService.configure")(function* (
       .find((provider) => provider.providerInstanceId === thread.modelSelection.instanceId)
       ?.models.find((model) => model.id === thread.modelSelection.model);
     const options =
-      model?.options?.filter((option) => /^(?:.*effort|reasoning|variant)$/i.test(option.id)) ?? [];
+      model?.options?.filter((option) =>
+        /^(?:.*effort|reasoning|thought_level|variant)$/i.test(option.id),
+      ) ?? [];
     const option = options.length === 1 ? options[0] : undefined;
     if (option === undefined || !option.values.includes(input.effort))
       return yield* new OrchestratorMcpFailure({

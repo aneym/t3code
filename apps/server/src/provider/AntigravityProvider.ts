@@ -38,6 +38,7 @@ import {
 import { resolveUsageLimitsAfterProbe } from "@t3tools/provider-core/server/usageLimits";
 
 import { antigravityThinkingConfig } from "./acp/AntigravityAcpSupport.ts";
+import { withNeonEffortPicker } from "./acp/AntigravityNeonEffort.ts";
 
 const EMPTY_MODEL_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 const MAX_WORKSPACE_SNAPSHOTS = 32;
@@ -60,7 +61,7 @@ type ThinkingConfig = NonNullable<ReturnType<typeof antigravityThinkingConfig>>;
 /** Thinking options each model reported when selected; `null` means it has none. */
 export type AntigravityThinkingLevels = ReadonlyMap<string, ThinkingConfig | null>;
 
-function thinkingCapabilities(config: ThinkingConfig | null | undefined, observed: boolean) {
+function thinking(config: ThinkingConfig | null | undefined, observed: boolean) {
   const descriptor = config
     ? acpProviderOptionDescriptors({ configOptions: [config], modeState: undefined })[0]
     : undefined;
@@ -89,10 +90,9 @@ export function buildAntigravityModelsFromSession(
           })) ?? [])
         : [];
   const currentThinking = antigravityThinkingConfig(setup.configOptions);
-  const seen = new Set<string>();
-  // The agent can list two IDs under one name; label the later ones so the picker tells them apart.
   const names = new Set<string>();
-  return entries.flatMap((entry): ServerProviderModel[] => {
+  const seen = new Set<string>();
+  const models = entries.flatMap((entry): ServerProviderModel[] => {
     if (!entry.value.trim() || seen.has(entry.value)) return [];
     seen.add(entry.value);
     const baseName = entry.name.trim() ? entry.name : entry.value;
@@ -109,12 +109,11 @@ export function buildAntigravityModelsFromSession(
           ? { isDefault: true, aliases: [ANTIGRAVITY_DEFAULT_MODEL] }
           : {}),
         capabilities:
-          observed === undefined
-            ? thinkingCapabilities(currentThinking, false)
-            : thinkingCapabilities(observed, true),
+          observed === undefined ? thinking(currentThinking, false) : thinking(observed, true),
       },
     ];
   });
+  return withNeonEffortPicker(models);
 }
 
 function nativeCommands(

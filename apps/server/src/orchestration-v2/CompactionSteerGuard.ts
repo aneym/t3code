@@ -17,9 +17,9 @@ export const runIsCompacting = Effect.fnUntraced(function* (
   store: ProjectionStoreV2Shape,
   threadId: ThreadId,
   runId: RunId,
-  projection: Pick<OrchestrationV2ThreadProjection, "turnItems">,
+  projection?: Pick<OrchestrationV2ThreadProjection, "turnItems">,
 ) {
-  if (hasRunningCompaction(projection, runId)) return true;
+  if (projection !== undefined && hasRunningCompaction(projection, runId)) return true;
   const stored = yield* store
     .getThreadRecords(threadId, ["turnItems"], {
       turnItemTypes: ["compaction"],
