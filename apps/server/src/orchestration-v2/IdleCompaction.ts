@@ -3,13 +3,14 @@ import { COMPACTION_SUGGESTION_MIN_TOKENS } from "@t3tools/shared/claudeCompacti
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 
-// Claude Code's idleCompaction defaults to 200K and won't go below 100K. Below
-// that a cold re-read is cheap, so compacting mostly loses context for little
-// saving.
 const MIN_CONTEXT_TOKENS = COMPACTION_SUGGESTION_MIN_TOKENS;
-// Start this long before the cache expires: enough for the session to resume
-// and send the compaction while the cache is still warm.
+const NEON_AUTO_COMPACT_MIN_TOKENS = 140_000;
+const NEON_IDLE_COMPACT_DELAY_MS = 15_000;
 const LEAD_MS = 2 * 60_000;
+
+export function isGeminiNeonModel(model: string): boolean {
+  return model.trim().toLowerCase().startsWith("gemini-4-neon");
+}
 
 export type IdleCompactionRecords = Pick<
   OrchestrationV2ThreadProjection,
@@ -95,10 +96,19 @@ export function idleCompactionWindow(
     .filter((turn) => turn.providerThreadId === providerThread.id && turn.tokenUsage !== undefined)
     .map((turn) => turn.tokenUsage!)
     .toSorted((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
-  if ((usages[0]?.usedTokens ?? 0) < MIN_CONTEXT_TOKENS) return null;
-  // A request served fully from cache creates no cache entry and reports no
-  // TTL, but it still refreshes the cache. Treat it as unknown and skip.
+  const usedTokens = usages[0]?.usedTokens ?? providerThread.contextUsage?.usedTokens ?? 0;
+  const isNeon = isGeminiNeonModel(thread.modelSelection.model);
+  const minContextTokens = isNeon ? NEON_AUTO_COMPACT_MIN_TOKENS : MIN_CONTEXT_TOKENS;
+  if (usedTokens < minContextTokens) return null;
   const expiresAt = usages[0]?.promptCacheExpiresAt;
+  if (expiresAt === undefined && isNeon) {
+    const completedAtMs = DateTime.toEpochMillis(latestRun.completedAt);
+    return {
+      runId: latestRun.id,
+      startMs: completedAtMs + NEON_IDLE_COMPACT_DELAY_MS,
+      endMs: Number.POSITIVE_INFINITY,
+    };
+  }
   const endMs = expiresAt === undefined ? Number.NaN : Date.parse(expiresAt);
   if (!Number.isFinite(endMs) || nowMs >= endMs) return null;
   return { runId: latestRun.id, startMs: endMs - LEAD_MS, endMs };

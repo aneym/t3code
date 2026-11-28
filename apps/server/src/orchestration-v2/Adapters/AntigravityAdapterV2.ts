@@ -100,6 +100,7 @@ const AntigravityProviderCapabilitiesV2 = {
   },
   turns: {
     ...AcpProviderCapabilitiesV2.turns,
+    supportsSteeringByInterruptRestart: false,
     goalCommands: "without_pause_resume",
   },
   tools: {

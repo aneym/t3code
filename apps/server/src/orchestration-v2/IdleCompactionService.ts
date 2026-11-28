@@ -15,7 +15,7 @@ import * as Stream from "effect/Stream";
 
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { idleCompactionWindow } from "./IdleCompaction.ts";
+import { idleCompactionWindow, isGeminiNeonModel } from "./IdleCompaction.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -50,9 +50,14 @@ export const make = Effect.gen(function* () {
           ],
           { messageRunIds: [runId], turnItemStatuses: ["pending", "running", "waiting"] },
         );
+        const idleCompactionMode = resolveIdleCompaction(
+          current,
+          records.thread.providerInstanceId,
+        );
+        const isNeon = isGeminiNeonModel(records.thread.modelSelection.model);
         if (
-          resolveIdleCompaction(current, records.thread.providerInstanceId) !==
-            "beforeCacheExpires" ||
+          idleCompactionMode === "off" ||
+          (!isNeon && idleCompactionMode !== "beforeCacheExpires") ||
           !resolveProjectProviderInstanceEnabled(
             current,
             records.thread.projectId,

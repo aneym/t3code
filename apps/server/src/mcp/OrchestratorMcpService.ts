@@ -1240,7 +1240,11 @@ const make = Effect.gen(function* () {
 
     const inheritedSelection = input.parent.thread.modelSelection;
     const requestedModel = input.target?.model;
-    const model =
+    const isGeminiNeonModel = (candidate: string) =>
+      candidate.trim().toLowerCase().startsWith("gemini-4-neon");
+    const isThinkingOptionId = (id: string) =>
+      id === "thought_level" || id === "thinkingLevel" || id === "reasoningEffort";
+    let model =
       requestedModel ??
       (instanceId === inheritedSelection.instanceId
         ? inheritedSelection.model
@@ -1260,6 +1264,14 @@ const make = Effect.gen(function* () {
         "model_unavailable",
         `Model ${requestedModel} is not advertised by provider ${instanceId}.`,
       );
+    }
+    if (requestedModel === undefined && /^gemini-4-neon-(?:high|xhigh)$/i.test(model.trim())) {
+      const mediumSlug = provider.models.find(
+        (candidate) => candidate.slug.toLowerCase() === "gemini-4-neon-medium",
+      )?.slug;
+      if (mediumSlug !== undefined) {
+        model = mediumSlug;
+      }
     }
 
     const descriptors = provider.models.find((candidate) => candidate.slug === model)?.capabilities
@@ -1292,6 +1304,42 @@ const make = Effect.gen(function* () {
         selections.set(selection.id, selection);
       }
       options = [...selections.values()];
+    }
+    const hasExplicitThinking =
+      requestedOptions?.some((selection) => isThinkingOptionId(selection.id)) ?? false;
+    const mediumThinkingDescriptor = descriptors?.find(
+      (descriptor) =>
+        isThinkingOptionId(descriptor.id) &&
+        descriptor.type === "select" &&
+        descriptor.options.some((option) => option.id === "medium"),
+    );
+    if (
+      isGeminiNeonModel(model) &&
+      !hasExplicitThinking &&
+      mediumThinkingDescriptor !== undefined
+    ) {
+      const selections = new Map((options ?? []).map((selection) => [selection.id, selection]));
+      const currentThinking = selections.get(mediumThinkingDescriptor.id)?.value;
+      if (
+        requestedModel === undefined &&
+        (currentThinking === undefined || currentThinking === "high" || currentThinking === "xhigh")
+      ) {
+        selections.set(mediumThinkingDescriptor.id, {
+          id: mediumThinkingDescriptor.id,
+          value: "medium",
+        });
+        options = [...selections.values()];
+      } else if (
+        requestedModel !== undefined &&
+        !/-(?:low|medium|high|xhigh)$/i.test(requestedModel.trim()) &&
+        !selections.has(mediumThinkingDescriptor.id)
+      ) {
+        selections.set(mediumThinkingDescriptor.id, {
+          id: mediumThinkingDescriptor.id,
+          value: "medium",
+        });
+        options = [...selections.values()];
+      }
     }
     return {
       modelSelection: { instanceId, model, ...(options === undefined ? {} : { options }) },
