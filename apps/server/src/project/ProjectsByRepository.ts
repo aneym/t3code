@@ -3,6 +3,7 @@ import {
   AGENT_HOME_KEY_PREFIX,
   agentHomeKeyOfRoot,
   agentHomeKeysOfRoot,
+  isAgentShellHomeRoot,
   parseAgentHomeKey,
 } from "../agents/AgentHomeOfPath.ts";
 import type * as ProjectService from "./ProjectService.ts";
@@ -10,6 +11,25 @@ import { repositoryIdentityKeys } from "./RepositoryIdentityKeys.ts";
 
 type Page = Effect.Success<ReturnType<ProjectService.ProjectService["Service"]["listPage"]>>;
 type Listed = Page["projects"][number];
+
+const disambiguateAgentHomeMatches = Effect.fn("ProjectsByRepository.disambiguateAgentHome")(
+  function* (matches: ReadonlyArray<Listed>, exactRoots: ReadonlySet<string>) {
+    if (matches.length <= 1) return matches;
+    const active = matches.filter((project) => project.archivedAt == null);
+    const pool = active.length > 0 ? active : matches;
+    if (pool.length === 1) return pool;
+    const shells: Array<Listed> = [];
+    for (const project of pool) {
+      if (yield* Effect.promise(() => isAgentShellHomeRoot(project.workspaceRoot))) {
+        shells.push(project);
+      }
+    }
+    if (shells.length === 1) return shells;
+    const exact = pool.filter((project) => exactRoots.has(project.workspaceRoot));
+    if (exact.length === 1) return exact;
+    return pool;
+  },
+);
 
 const scan = Effect.fn("ProjectsByRepository.scan")(function* (
   projects: ProjectService.ProjectService["Service"],
@@ -59,21 +79,30 @@ export const projectsMatchingAgentHome = Effect.fn("ProjectsByRepository.matchin
     }
     if (exactRoots.size === 0 && targets.size === 0) return { matches: [], complete: true };
     const candidates = yield* scan(projects, (project) => project.repositoryIdentity == null);
-    const exact = candidates.matches.filter((project) => exactRoots.has(project.workspaceRoot));
-    if (exact.length === 1) return { matches: exact, complete: candidates.complete };
-    if (targets.size === 0) return { matches: exact, complete: candidates.complete };
+    if (targets.size === 0) {
+      const exact = candidates.matches.filter((project) => exactRoots.has(project.workspaceRoot));
+      return {
+        matches: yield* disambiguateAgentHomeMatches(exact, exactRoots),
+        complete: candidates.complete,
+      };
+    }
     const matches: Array<Listed> = [];
     for (const project of candidates.matches) {
       const keys = yield* Effect.promise(() => agentHomeKeysOfRoot(project.workspaceRoot));
-      const matched = keys.some((key) => {
-        const parsed = parseAgentHomeKey(key);
-        return (
-          parsed !== undefined &&
-          targets.has(`${parsed.handle}\u0000${parsed.executor ? "1" : "0"}`)
-        );
-      });
+      const matched =
+        exactRoots.has(project.workspaceRoot) ||
+        keys.some((key) => {
+          const parsed = parseAgentHomeKey(key);
+          return (
+            parsed !== undefined &&
+            targets.has(`${parsed.handle}\u0000${parsed.executor ? "1" : "0"}`)
+          );
+        });
       if (matched) matches.push(project);
     }
-    return { matches, complete: candidates.complete };
+    return {
+      matches: yield* disambiguateAgentHomeMatches(matches, exactRoots),
+      complete: candidates.complete,
+    };
   },
 );

@@ -59,6 +59,25 @@ const agentHomeDescriptorOfPath = async (
   return undefined;
 };
 
+const pathSegments = (workspaceRoot: string) =>
+  workspaceRoot.split(/[\\/]/).filter((part) => part.length > 0);
+
+const parseAgentHomePathParts = (workspaceRoot: string) => {
+  const segments = pathSegments(workspaceRoot);
+  const last = segments.at(-1);
+  const executor = last === EXECUTOR_DIR;
+  const handle = executor ? segments.at(-2) : last;
+  const parent = executor ? segments.at(-3) : segments.at(-2);
+  if (
+    handle === undefined ||
+    !AGENT_HOME_HANDLE_PATTERN.test(handle) ||
+    (parent !== "agents" && parent !== "shells")
+  ) {
+    return undefined;
+  }
+  return { handle, executor, shell: parent === "shells" };
+};
+
 export const AGENT_HOME_KEY_PREFIX = "agent-home:";
 const AGENT_HOME_HANDLE_KEY_PREFIX = "agent-home-handle:";
 
@@ -75,23 +94,19 @@ export const parseAgentHomeKey = (key: string): AgentHomeDescriptor | undefined 
     return undefined;
   }
   if (key.startsWith(AGENT_HOME_KEY_PREFIX)) {
-    const segments = key
-      .slice(AGENT_HOME_KEY_PREFIX.length)
-      .split(/[\\/]/)
-      .filter((part) => part.length > 0);
-    const last = segments.at(-1);
-    const executor = last === EXECUTOR_DIR;
-    const handle = executor ? segments.at(-2) : last;
-    const parent = executor ? segments.at(-3) : segments.at(-2);
-    if (
-      handle !== undefined &&
-      AGENT_HOME_HANDLE_PATTERN.test(handle) &&
-      (parent === "agents" || parent === "shells")
-    ) {
-      return { handle, executor };
-    }
+    const parsed = parseAgentHomePathParts(key.slice(AGENT_HOME_KEY_PREFIX.length));
+    return parsed === undefined ? undefined : { handle: parsed.handle, executor: parsed.executor };
   }
   return undefined;
+};
+
+export const isAgentShellHomePath = (workspaceRoot: string) =>
+  parseAgentHomePathParts(workspaceRoot)?.shell === true;
+
+export const isAgentShellHomeRoot = async (workspaceRoot: string) => {
+  const location = await agentHomeOfPath(workspaceRoot);
+  if (location === null) return false;
+  return location.root === (await resolveRoot(shellsRoot()));
 };
 
 export const isAgentExecutorHomeRoot = async (workspaceRoot: string) =>

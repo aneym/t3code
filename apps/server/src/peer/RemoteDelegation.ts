@@ -51,6 +51,12 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { delegatedChildDefaultModel, remoteChildOptions } from "../mcp/delegatedChildModel.ts";
 import { remoteDelegateCommandId } from "../mcp/delegateRetry.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import {
+  AGENT_HOME_KEY_PREFIX,
+  agentHomeKeysOfRoot,
+  isAgentShellHomePath,
+  parseAgentHomeKey,
+} from "../agents/AgentHomeOfPath.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -179,13 +185,24 @@ const make = Effect.gen(function* () {
       (here === undefined
         ? undefined
         : (yield* repositoryIdentities.resolve(here.workspaceRoot))?.canonicalKey);
-    if (key === undefined) {
+    const homeTarget =
+      key !== undefined || here === undefined
+        ? undefined
+        : (yield* Effect.promise(() => agentHomeKeysOfRoot(here.workspaceRoot)))
+            .map(parseAgentHomeKey)
+            .find((parsed) => parsed !== undefined);
+    if (key === undefined && homeTarget === undefined) {
       return yield* new OrchestratorMcpFailure({
         code: "target_required",
         message: "Pass target.projectId: this thread's project has no repository to match there.",
       });
     }
-    const matches: Array<{ readonly id: ProjectId; readonly title: string }> = [];
+    const matches: Array<{
+      readonly id: ProjectId;
+      readonly title: string;
+      readonly workspaceRoot: string;
+      readonly archivedAt?: string | null | undefined;
+    }> = [];
     let cursor: number | null = 0;
     while (cursor !== null) {
       const listed: Tool.Success<typeof ProjectToolkit.tools.t3_project_list> =
@@ -194,17 +211,51 @@ const make = Effect.gen(function* () {
           limit: 100,
         });
       matches.push(
-        ...listed.projects.filter((project) => project.repositoryIdentity?.canonicalKey === key),
+        ...listed.projects.filter((project) => {
+          if (key !== undefined) return project.repositoryIdentity?.canonicalKey === key;
+          if (project.repositoryIdentity != null) return false;
+          const remoteHome = parseAgentHomeKey(`${AGENT_HOME_KEY_PREFIX}${project.workspaceRoot}`);
+          if (
+            remoteHome !== undefined &&
+            homeTarget !== undefined &&
+            remoteHome.handle === homeTarget.handle &&
+            remoteHome.executor === homeTarget.executor
+          ) {
+            return true;
+          }
+          return here !== undefined && project.workspaceRoot === here.workspaceRoot;
+        }),
       );
       cursor = listed.nextCursor;
     }
-    if (matches.length === 1) return matches[0]!.id;
+    let resolved = matches;
+    if (key === undefined && resolved.length > 1) {
+      const active = resolved.filter((project) => project.archivedAt == null);
+      if (active.length > 0) resolved = active;
+      if (resolved.length > 1) {
+        const shells = resolved.filter((project) => isAgentShellHomePath(project.workspaceRoot));
+        if (shells.length === 1) resolved = shells;
+      }
+      if (resolved.length > 1 && here !== undefined) {
+        const exact = resolved.filter((project) => project.workspaceRoot === here.workspaceRoot);
+        if (exact.length === 1) resolved = exact;
+      }
+    }
+    if (resolved.length === 1) return resolved[0]!.id;
+    const homeLabel =
+      homeTarget === undefined
+        ? undefined
+        : `${homeTarget.handle}${homeTarget.executor ? "/executor" : ""}`;
     return yield* new OrchestratorMcpFailure({
       code: "invalid_request",
       message:
-        matches.length === 0
-          ? `No project there has this repository (${key}). Pass target.projectId; t3_project_list with this environmentId lists them. To bring the repository there, use t3_project_clone and then t3_project_create with this environmentId.`
-          : `Several projects there have this repository: ${matches.map((project) => `${project.title} (${project.id})`).join(", ")}. Pass target.projectId.`,
+        resolved.length === 0
+          ? key !== undefined
+            ? `No project there has this repository (${key}). Pass target.projectId; t3_project_list with this environmentId lists them. To bring the repository there, use t3_project_clone and then t3_project_create with this environmentId.`
+            : `No project there matches agent home ${homeLabel}. Pass target.projectId; t3_project_list with this environmentId lists them.`
+          : key !== undefined
+            ? `Several projects there have this repository: ${resolved.map((project) => `${project.title} (${project.id})`).join(", ")}. Pass target.projectId.`
+            : `Several projects there match agent home ${homeLabel}: ${resolved.map((project) => `${project.title} (${project.id})`).join(", ")}. Pass target.projectId.`,
     });
   });
 

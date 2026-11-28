@@ -2,6 +2,8 @@ import * as DocumentText from "../provider/DocumentText.ts";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import {
   CommandId,
   EventId,
@@ -90,6 +92,7 @@ type LaunchedWith = Pick<
 /** The thread the box launches for the task, which the test finishes. */
 interface BoxThread {
   readonly launched: Ref.Ref<ThreadId | null>;
+  readonly launchedProjectId: Ref.Ref<ProjectId | null>;
   /** The link session that launched it, as the box stamps it. */
   readonly linkOrigin: Ref.Ref<{ readonly sessionId: string; readonly label: string } | null>;
   /** The parent the launch names, so the thread there can link back to it. */
@@ -146,6 +149,7 @@ interface BoxThread {
 const makeBoxThread = Effect.gen(function* () {
   return {
     launched: yield* Ref.make<ThreadId | null>(null),
+    launchedProjectId: yield* Ref.make<ProjectId | null>(null),
     linkOrigin: yield* Ref.make<{ readonly sessionId: string; readonly label: string } | null>(
       null,
     ),
@@ -215,8 +219,8 @@ const boxProjects: ReadonlyArray<Project> = [
   },
 ];
 
-const serveBox = (thread: BoxThread) => {
-  return servePeer(box, boxToolkitLayer(thread));
+const serveBox = (thread: BoxThread, projects: ReadonlyArray<Project> = boxProjects) => {
+  return servePeer(box, boxToolkitLayer(thread, projects));
 };
 
 const boxRunId = RunId.make("run:box");
@@ -224,7 +228,7 @@ const boxLaterRunId = RunId.make("run:box-later");
 const boxQueuedRunId = RunId.make("run:box-queued");
 const continuationOf = (runId: RunId) => RunId.make(`${runId}:restarted`);
 
-const boxToolkitLayer = (thread: BoxThread) => {
+const boxToolkitLayer = (thread: BoxThread, projects: ReadonlyArray<Project> = boxProjects) => {
   const runId = boxRunId;
   const interrupts = new Set<string>();
   const shellOf = (threadId: ThreadId) =>
@@ -513,6 +517,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
       Ref.get(thread.runless).pipe(
         Effect.flatMap((runless) =>
           Ref.set(thread.launched, input.threadId!).pipe(
+            Effect.andThen(Ref.set(thread.launchedProjectId, input.projectId)),
             Effect.andThen(Ref.set(thread.linkOrigin, input.linkOrigin ?? null)),
             Effect.andThen(Ref.set(thread.delegatedFrom, input.delegatedFrom ?? null)),
             Effect.andThen(Ref.set(thread.message, input.initialMessage?.text ?? null)),
@@ -586,12 +591,12 @@ const boxToolkitLayer = (thread: BoxThread) => {
     Layer.provide(
       Layer.mock(ProjectService.ProjectService)({
         getById: (id) =>
-          Effect.succeed(Option.fromNullishOr(boxProjects.find((project) => project.id === id))),
+          Effect.succeed(Option.fromNullishOr(projects.find((project) => project.id === id))),
         // More than a page, so finding the project with this repository pages.
         listPage: ({ cursor, limit }) =>
           Effect.succeed({
-            projects: boxProjects.slice(cursor, cursor + limit),
-            nextCursor: cursor + limit < boxProjects.length ? cursor + limit : null,
+            projects: projects.slice(cursor, cursor + limit),
+            nextCursor: cursor + limit < projects.length ? cursor + limit : null,
           }),
       }),
     ),
@@ -653,6 +658,7 @@ const makeLaptop = (
   >,
   /** The laptop's links from before a restart, which keep their sessions there. */
   kept?: Context.Context<Layer.Success<ReturnType<typeof layerLinkingEnvironment>>>,
+  laptopWorkspaceRoot = "/home/me/app",
 ) =>
   Effect.gen(function* () {
     const linking = kept ?? (yield* layerLinkingEnvironment(laptop).pipe(Layer.build));
@@ -687,7 +693,7 @@ const makeLaptop = (
               // A cold enrichment cache: the project itself reports no identity yet.
               getById: () =>
                 Effect.succeedSome({
-                  workspaceRoot: "/home/me/app",
+                  workspaceRoot: laptopWorkspaceRoot,
                   repositoryIdentity: null,
                 } as never),
             }),
@@ -2263,4 +2269,78 @@ it.effect("a task whose thread there has no run ends with its last reply", () =>
       expect(yield* Ref.get(thread.waitedFor)).toEqual([undefined]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+const swapAgentHomesDir = (next: string | undefined): string | undefined => {
+  const prev = process.env.T3CODE_AGENT_HOMES_DIR;
+  if (next === undefined) delete process.env.T3CODE_AGENT_HOMES_DIR;
+  else process.env.T3CODE_AGENT_HOMES_DIR = next;
+  return prev;
+};
+
+it.effect("delegating from an agent executor home resolves to the box's live shell executor", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-remote-home-" });
+    const agentsDir = path.join(root, "agents");
+    const localExec = path.join(agentsDir, "bot", "executor");
+    const remoteStaleExec = path.join(root, "remote", "agents", "bot", "executor");
+    const remoteShellExec = path.join(root, "remote", "shells", "bot", "executor");
+    yield* fs.makeDirectory(localExec, { recursive: true });
+    yield* Effect.acquireUseRelease(
+      Effect.sync(() => swapAgentHomesDir(agentsDir)),
+      () =>
+        Effect.gen(function* () {
+          const staleProjectId = ProjectId.make("project:box-bot-stale-exec");
+          const shellProjectId = ProjectId.make("project:box-bot-shell-exec");
+          const thread = yield* makeBoxThread;
+          const b = yield* serveBox(thread, [
+            {
+              id: staleProjectId,
+              title: "Bot stale exec",
+              workspaceRoot: remoteStaleExec,
+              repositoryIdentity: null,
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt: "2026-10-01T00:00:00.000Z",
+              updatedAt: "2026-10-01T00:00:00.000Z",
+              deletedAt: null,
+            },
+            {
+              id: shellProjectId,
+              title: "Bot work (shell)",
+              workspaceRoot: remoteShellExec,
+              repositoryIdentity: null,
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt: "2026-10-01T00:00:00.000Z",
+              updatedAt: "2026-10-01T00:00:00.000Z",
+              deletedAt: null,
+            },
+          ]);
+          const offers = yield* SubscriptionRef.make<
+            ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+          >([]);
+          const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+          const a = yield* makeLaptop(database, offers, undefined, localExec);
+          yield* linkTo(a.links, b, "full-access");
+          yield* seedParent(a);
+
+          const delegated = yield* delegateToBox(a);
+          expect(yield* Ref.get(thread.launchedProjectId)).toBe(shellProjectId);
+          yield* Ref.set(thread.status, "completed");
+          yield* Ref.set(thread.reply, "Ran in peer shell executor.");
+          yield* Deferred.succeed(thread.finished, undefined);
+          expect(yield* taskResult(a, delegated.taskId)).toMatchObject({
+            status: "completed",
+            result: "Ran in peer shell executor.",
+          });
+        }),
+      (prev) => Effect.sync(() => void swapAgentHomesDir(prev)),
+    );
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(Layer.mergeAll(NodeHttpServer.layerTest, NodeServices.layer)),
+  ),
 );

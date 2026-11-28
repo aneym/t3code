@@ -222,4 +222,42 @@ describe("scoreAgentPlacement", () => {
     assert.closeTo(noDisk.score / fullDisk.score, 0.1, 1e-6);
     assert.include(noDisk.note ?? "", "free disk");
   });
+
+  it("scales uncapped rooms by D'Hondt occupancy 1 / (1 + active + held) to spread bursts organically", () => {
+    const scoreWithRoom = (
+      id: string,
+      weight: number,
+      cpuCount: number,
+      active: number,
+      held = 0,
+    ) =>
+      scoreAgentPlacement({
+        environmentId: EnvironmentId.make(id),
+        label: id,
+        weight,
+        now: NOW,
+        line: DEFAULT_AGENT_PLACEMENT_HEALTH_LINE,
+        resources: resources({
+          cpuCount,
+          loadAverage1m: cpuCount * 0.2,
+          availableMemoryBytes: 48 * GIB,
+          totalMemoryBytes: 64 * GIB,
+          freeDiskBytes: 80 * GIB,
+          totalDiskBytes: 400 * GIB,
+        }),
+        room: { cap: null, active, held, free: null },
+      });
+
+    const idle = scoreWithRoom("env:heron", 100, 16, 0, 0);
+    const oneActive = scoreWithRoom("env:heron", 100, 16, 1, 0);
+    const threeBusy = scoreWithRoom("env:heron", 100, 16, 2, 1);
+    assert.closeTo(oneActive.score / idle.score, 0.5, 1e-6);
+    assert.closeTo(threeBusy.score / idle.score, 0.25, 1e-6);
+
+    const busyHeron = scoreWithRoom("env:heron", 100, 16, 6, 0);
+    const idleForge = scoreWithRoom("env:forge", 65, 4, 0, 0);
+    const busyAx102 = scoreWithRoom("env:ax102", 40, 32, 3, 0);
+    assert.isAbove(idleForge.score, busyHeron.score);
+    assert.isAbove(busyAx102.score, idleForge.score);
+  });
 });
