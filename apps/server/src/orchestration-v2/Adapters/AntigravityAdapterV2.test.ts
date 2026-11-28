@@ -66,18 +66,43 @@ function permissionRequest(
 }
 
 describe("AntigravityAdapterV2 flavor", () => {
-  it("keeps a successful subagent launch running until the parent turn becomes idle", () => {
-    const batch = flavor.extractSubagentUpdate?.({
+  it("preserves subagent prompt, real terminal status, result, and raw tool item", () => {
+    const completed = flavor.extractSubagentUpdate?.({
       toolCallId: "trajectory:4",
       title: "Running start_subagent",
       kind: "other",
       status: "completed",
-      data: { rawOutput: "Started two agents." },
+      data: {
+        rawInput: {
+          Prompt: "Audit compaction path",
+          Role: "Compaction Auditor",
+          Model: "gemini-4-neon",
+        },
+        rawOutput: "Found stale usage after /compact.",
+      },
     });
-    assert.equal(batch?.status, "running");
-    assert.equal(batch?.prompt, "Started two agents.");
-    assert.isNull(batch?.result);
-    assert.isTrue(flavor.subagentsIdleOnTurnCompletion);
+    assert.equal(completed?.status, "completed");
+    assert.equal(completed?.prompt, "Audit compaction path");
+    assert.equal(completed?.title, "Compaction Auditor");
+    assert.equal(completed?.model, "gemini-4-neon");
+    assert.equal(completed?.result, "Found stale usage after /compact.");
+    assert.strictEqual(completed?.suppressNormalTool, false);
+    assert.isTrue(flavor.settleSubagentsOnTurnCompletion);
+
+    const failed = flavor.extractSubagentUpdate?.({
+      toolCallId: "trajectory:5",
+      title: "Running invoke_subagent",
+      kind: "other",
+      status: "failed",
+      data: {
+        rawInput: { Prompt: "Inspect refusal path" },
+        rawOutput: "Subagent timed out.",
+      },
+    });
+    assert.equal(failed?.status, "failed");
+    assert.equal(failed?.prompt, "Inspect refusal path");
+    assert.equal(failed?.result, "Subagent timed out.");
+    assert.strictEqual(failed?.suppressNormalTool, false);
   });
 
   it("routes interaction_* permission requests to the question card", () => {
@@ -973,5 +998,205 @@ describe("AntigravityAdapterV2 subagent reads", () => {
       assert.deepEqual(read("call_denied"), failed);
       assert.deepEqual(read("call_unseen"), failed);
     }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+
+  it.live(
+    "preserves Antigravity native subagent prompt, completion status, result, and raw tool item",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const crypto = yield* Crypto.Crypto;
+        const path = yield* Path.Path;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const instanceId = ProviderInstanceId.make("antigravity-subagent-trace");
+        const threadId = ThreadId.make("thread-antigravity-subagent-trace");
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        type SessionUpdateHandler = Parameters<RuntimeService["handleSessionUpdate"]>[0];
+        let sessionUpdate: SessionUpdateHandler | undefined;
+        const adapter = yield* makeAntigravityAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          makeRuntime: (input) =>
+            makeAntigravityAcpRuntime({
+              ...input,
+              childProcessSpawner,
+              spawn: {
+                command: process.execPath,
+                args: [mockAgentPath],
+                cwd: input.cwd,
+                env: { T3_ACP_ANTIGRAVITY: "1" },
+              },
+            }).pipe(
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.map((runtime): RuntimeService => ({
+                ...runtime,
+                handleSessionUpdate: (handler) =>
+                  Effect.sync(() => {
+                    sessionUpdate = handler;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+                prompt: () =>
+                  Effect.gen(function* () {
+                    const send = (update: EffectAcpSchema.SessionUpdate) =>
+                      sessionUpdate === undefined
+                        ? Effect.die("the adapter must handle session updates")
+                        : sessionUpdate(
+                            normalizeAntigravitySessionUpdate({
+                              sessionId: "mock-session-1",
+                              update,
+                            }),
+                          );
+                    yield* send({
+                      sessionUpdate: "tool_call",
+                      toolCallId: "subagent:done",
+                      title: "Running invoke_subagent",
+                      kind: "other",
+                      status: "in_progress",
+                      rawInput: {
+                        Prompt: "Investigate compaction usage reset",
+                        Role: "Compaction Auditor",
+                      },
+                    });
+                    yield* send({
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: "subagent:done",
+                      status: "completed",
+                      rawOutput: "Compaction reset verified.",
+                    });
+                    yield* send({
+                      sessionUpdate: "tool_call",
+                      toolCallId: "subagent:unclosed",
+                      title: "Running start_subagent",
+                      kind: "other",
+                      status: "in_progress",
+                      rawInput: { Prompt: "Check open subagent settlement" },
+                    });
+                    return { stopReason: "end_turn" as const };
+                  }),
+              })),
+            ),
+          withProcess: (_stop, task) => task,
+          // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
+          defaultModel: Effect.succeed(undefined),
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+        const session = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-subagent-trace"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* session.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        yield* session.startTurn({
+          appThread: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId: ProjectId.make("project-antigravity-subagent-trace"),
+            title: "Antigravity subagent trace",
+            providerInstanceId: instanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: process.cwd(),
+            activeProviderThreadId: providerThread.id,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          threadId,
+          runId: RunId.make("run-antigravity-subagent-trace"),
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: RunAttemptId.make("attempt-antigravity-subagent-trace"),
+          rootNodeId: NodeId.make("node-antigravity-subagent-trace"),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("message-antigravity-subagent-trace"),
+            text: "audit subagents",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+        const events = Array.from(
+          yield* session.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+          ),
+        );
+        const latestSubagent = (nativeId: string) =>
+          events.findLast(
+            (event) =>
+              event.type === "subagent.updated" &&
+              event.subagent.nativeTaskRef?.nativeId === nativeId,
+          );
+        const doneSubagent = latestSubagent("subagent:done");
+        assert.equal(doneSubagent?.type, "subagent.updated");
+        if (doneSubagent?.type === "subagent.updated") {
+          assert.equal(doneSubagent.subagent.prompt, "Investigate compaction usage reset");
+          assert.equal(doneSubagent.subagent.title, "Compaction Auditor");
+          assert.equal(doneSubagent.subagent.status, "completed");
+          assert.equal(doneSubagent.subagent.result, "Compaction reset verified.");
+        }
+        const unclosedSubagent = latestSubagent("subagent:unclosed");
+        assert.equal(unclosedSubagent?.type, "subagent.updated");
+        if (unclosedSubagent?.type === "subagent.updated") {
+          assert.equal(unclosedSubagent.subagent.prompt, "Check open subagent settlement");
+          assert.equal(unclosedSubagent.subagent.status, "completed");
+        }
+        assert.isFalse(
+          events.some(
+            (event) => event.type === "subagent.updated" && event.subagent.status === "idle",
+          ),
+        );
+        const rawDoneTool = events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.nativeItemRef?.nativeId === "subagent:done",
+        );
+        assert.equal(rawDoneTool?.type, "turn_item.updated");
+        if (
+          rawDoneTool?.type === "turn_item.updated" &&
+          rawDoneTool.turnItem.type === "dynamic_tool"
+        ) {
+          assert.equal(rawDoneTool.turnItem.status, "completed");
+          assert.equal(rawDoneTool.turnItem.output, "Compaction reset verified.");
+        }
+        const rawUnclosedTool = events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.nativeItemRef?.nativeId === "subagent:unclosed",
+        );
+        assert.equal(rawUnclosedTool?.type, "turn_item.updated");
+        if (
+          rawUnclosedTool?.type === "turn_item.updated" &&
+          rawUnclosedTool.turnItem.type === "dynamic_tool"
+        ) {
+          assert.equal(rawUnclosedTool.turnItem.status, "completed");
+        }
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });

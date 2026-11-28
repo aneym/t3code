@@ -102,6 +102,7 @@ function makeTestAdapter(input: {
   readonly failStartOnce?: Ref.Ref<boolean>;
   readonly refuseStarts?: Ref.Ref<number>;
   readonly refusalCause?: unknown;
+  readonly refusedBeforePrompt?: boolean;
   readonly failInjectionOnce?: Ref.Ref<boolean>;
   readonly nativeThreadGeneration?: Ref.Ref<number>;
   readonly failResume?: boolean;
@@ -244,6 +245,9 @@ function makeTestAdapter(input: {
                   threadId: turnInput.threadId,
                   providerThreadId: turnInput.providerThread.id,
                   runId: turnInput.runId,
+                  ...(input.refusedBeforePrompt === undefined
+                    ? {}
+                    : { refusedBeforePrompt: input.refusedBeforePrompt }),
                   cause:
                     input.refusalCause ?? new ClaudeBackgroundWorkBlocksQueryReplacementError(),
                 });
@@ -1471,16 +1475,95 @@ describe("orchestration v2 provider switching", () => {
   );
 
   it.live.each([
-    ["background work", new ClaudeBackgroundWorkBlocksQueryReplacementError()],
-    ["an unreadable append file", new ClaudeAppendSystemPromptFileError({ path: "missing.md" })],
+    [
+      "background work",
+      {
+        driver: CLAUDE_DRIVER,
+        capabilities: ClaudeProviderCapabilitiesV2,
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        refusalCause: new ClaudeBackgroundWorkBlocksQueryReplacementError(),
+      },
+    ],
+    [
+      "an unreadable append file",
+      {
+        driver: CLAUDE_DRIVER,
+        capabilities: ClaudeProviderCapabilitiesV2,
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        refusalCause: new ClaudeAppendSystemPromptFileError({ path: "missing.md" }),
+      },
+    ],
     [
       "an MCP registration timeout",
-      new ClaudeAgentSdkQueryRunnerError({
-        method: "setMcpServers",
-        cause: new ClaudeMcpRegistrationTimeoutError(),
-      }),
+      {
+        driver: CLAUDE_DRIVER,
+        capabilities: ClaudeProviderCapabilitiesV2,
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        refusalCause: new ClaudeAgentSdkQueryRunnerError({
+          method: "setMcpServers",
+          cause: new ClaudeMcpRegistrationTimeoutError(),
+        }),
+      },
     ],
-  ] as const)("keeps the native session after turns refused for %s", ([, refusalCause]) =>
+    [
+      "an ACP model selection rejection",
+      {
+        driver: GROK_DRIVER,
+        capabilities: AcpProviderCapabilitiesV2,
+        modelSelection: GROK_MODEL_SELECTION,
+        refusalCause: {
+          _tag: "AcpModelSelectionError",
+          model: "gemini-invalid",
+          cause: new Error("model not available"),
+        },
+      },
+    ],
+    [
+      "an active previous turn on a non-Claude provider",
+      {
+        driver: GROK_DRIVER,
+        capabilities: AcpProviderCapabilitiesV2,
+        modelSelection: GROK_MODEL_SELECTION,
+        refusalCause: new ProviderAdapter.ProviderAdapterProtocolError({
+          driver: GROK_DRIVER,
+          detail: "ACP turn still active",
+          reason: "previous_turn_active",
+        }),
+      },
+    ],
+    [
+      "an unreadable attachment on a non-Claude provider",
+      {
+        driver: CODEX_DRIVER,
+        capabilities: CodexProviderCapabilitiesV2,
+        modelSelection: CODEX_MODEL_SELECTION,
+        refusalCause: new ProviderAdapter.ProviderAdapterProtocolError({
+          driver: CODEX_DRIVER,
+          detail: "Attachment unreadable",
+          reason: "attachment_unreadable",
+        }),
+      },
+    ],
+    [
+      "a Cursor model availability rejection",
+      {
+        driver: GROK_DRIVER,
+        capabilities: AcpProviderCapabilitiesV2,
+        modelSelection: GROK_MODEL_SELECTION,
+        refusalCause: { _tag: "CursorModelUnavailableError", model: "cursor-unknown" },
+      },
+    ],
+    [
+      "an explicit pre-prompt refusal flag from a non-Claude adapter",
+      {
+        driver: GROK_DRIVER,
+        capabilities: AcpProviderCapabilitiesV2,
+        modelSelection: GROK_MODEL_SELECTION,
+        refusalCause: new Error("ACP session activation failed before prompt"),
+        refusedBeforePrompt: true,
+      },
+    ],
+  ] as const)("keeps the native session after turns refused for %s", ([, testCase]) =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("refused-start-keeps-native");
@@ -1489,14 +1572,17 @@ describe("orchestration v2 provider switching", () => {
         const generation = yield* Ref.make(0);
         const registry = ProviderAdapterRegistry.layerFromAdapters([
           makeTestAdapter({
-            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
-            driver: CLAUDE_DRIVER,
-            capabilities: ClaudeProviderCapabilitiesV2,
-            modelSelection: CLAUDE_MODEL_SELECTION,
+            instanceId: testCase.modelSelection.instanceId,
+            driver: testCase.driver,
+            capabilities: testCase.capabilities,
+            modelSelection: testCase.modelSelection,
             responseByRunOrdinal: {},
             capturedTurns,
             refuseStarts,
-            refusalCause,
+            refusalCause: testCase.refusalCause,
+            ...("refusedBeforePrompt" in testCase
+              ? { refusedBeforePrompt: testCase.refusedBeforePrompt }
+              : {}),
             nativeThreadGeneration: generation,
           }),
         ]);
@@ -1513,7 +1599,7 @@ describe("orchestration v2 provider switching", () => {
               creationSource: "web",
               text: `Request ${ordinal}`,
               attachments: [],
-              modelSelection: CLAUDE_MODEL_SELECTION,
+              modelSelection: testCase.modelSelection,
               dispatchMode: { type: "start_immediately" },
             });
             yield* orchestrator.streamStoredEvents.pipe(
@@ -1536,7 +1622,7 @@ describe("orchestration v2 provider switching", () => {
             createdBy: "user",
             creationSource: "web",
             title: "Refused start",
-            modelSelection: CLAUDE_MODEL_SELECTION,
+            modelSelection: testCase.modelSelection,
             runtimeMode: "full-access",
             interactionMode: "default",
             branch: null,

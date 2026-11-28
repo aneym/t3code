@@ -428,7 +428,104 @@ export function classifyAntigravitySubagentToolCall(
   return Predicate.isObject(meta) && meta.is_mcp_tool_call === true ? "mcp" : "subagent";
 }
 
+function firstNonEmptyStringField(value: unknown, keys: ReadonlyArray<string>): string | undefined {
+  if (!Predicate.isObject(value)) return undefined;
+  for (const key of keys) {
+    const candidate = value[key];
+    if (typeof candidate === "string" && candidate.trim()) {
+      return boundText(candidate.trim());
+    }
+  }
+  return undefined;
+}
+
+export function antigravitySubagentPrompt(toolCall: AcpToolCallState): string | undefined {
+  const rawInput = toolCall.data.rawInput;
+  if (typeof rawInput === "string" && rawInput.trim()) {
+    return boundText(rawInput.trim());
+  }
+  const inputPrompt = firstNonEmptyStringField(rawInput, [
+    "Prompt",
+    "prompt",
+    "Task",
+    "task",
+    "Instruction",
+    "instruction",
+    "Message",
+    "message",
+    "Description",
+    "description",
+    "Query",
+    "query",
+  ]);
+  if (inputPrompt !== undefined) return inputPrompt;
+  if (toolCall.detail?.trim()) return boundText(toolCall.detail.trim());
+  return toolCall.title?.trim() ? boundText(toolCall.title.trim()) : undefined;
+}
+
+export function antigravitySubagentTitle(toolCall: AcpToolCallState): string {
+  return (
+    firstNonEmptyStringField(toolCall.data.rawInput, [
+      "Role",
+      "role",
+      "Title",
+      "title",
+      "Name",
+      "name",
+      "TypeName",
+      "typeName",
+    ]) ?? "Antigravity subagent"
+  );
+}
+
+export function antigravitySubagentModel(toolCall: AcpToolCallState): string | null {
+  const model = firstNonEmptyStringField(toolCall.data.rawInput, ["Model", "model"]);
+  return model === undefined || model.toLowerCase() === "inherit" ? null : model;
+}
+
+function antigravitySubagentContentText(content: unknown): string | undefined {
+  if (!Array.isArray(content)) return undefined;
+  const parts: Array<string> = [];
+  for (const entry of content) {
+    if (!Predicate.isObject(entry)) continue;
+    if (entry.type === "text" && typeof entry.text === "string" && entry.text.trim()) {
+      parts.push(entry.text.trim());
+      continue;
+    }
+    if (
+      entry.type === "content" &&
+      Predicate.isObject(entry.content) &&
+      entry.content.type === "text" &&
+      typeof entry.content.text === "string" &&
+      entry.content.text.trim()
+    ) {
+      parts.push(entry.content.text.trim());
+    }
+  }
+  return parts.length > 0 ? boundText(parts.join("\n\n")) : undefined;
+}
+
 export function antigravitySubagentOutput(toolCall: AcpToolCallState): string | undefined {
   const output = toolCall.data.rawOutput;
-  return typeof output === "string" && output.trim() ? boundText(output.trim()) : undefined;
+  if (typeof output === "string" && output.trim()) {
+    return boundText(output.trim());
+  }
+  const objectOutput = firstNonEmptyStringField(output, [
+    "result",
+    "Result",
+    "output",
+    "Output",
+    "summary",
+    "Summary",
+    "message",
+    "Message",
+    "text",
+    "Text",
+    "error",
+    "Error",
+    "combinedOutput",
+    "combined_output",
+  ]);
+  if (objectOutput !== undefined) return objectOutput;
+  return antigravitySubagentContentText(toolCall.data.content);
 }

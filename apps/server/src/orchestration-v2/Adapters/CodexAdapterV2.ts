@@ -6527,6 +6527,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           function* (
             turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
             codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>,
+            onPromptDispatch?: () => void,
           ) {
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
@@ -6558,6 +6559,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               else next.delete(threadId);
               return next;
             });
+            onPromptDispatch?.();
             const started = yield* client
               .request("turn/start", turnStartParams)
               .pipe(withAppServerDeadline("turn/start"));
@@ -6923,13 +6925,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ),
               ),
           ),
-          compactThread: Effect.fn("CodexAdapterV2.compactThread")(
-            function* (turnInput) {
+          compactThread: Effect.fn("CodexAdapterV2.compactThread")(function* (turnInput) {
+            let promptDispatched = false;
+            return yield* Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(turnInput.providerThread);
               yield* Ref.update(pendingRootTurns, (current) =>
                 new Map(current).set(threadId, turnInput),
               );
-              // Clear on interruption; a late turn/started must not be adopted after an interrupted start.
+              promptDispatched = true;
               yield* client.request("thread/compact/start", { threadId }).pipe(
                 Effect.onError(() =>
                   Ref.update(pendingRootTurns, (current) => {
@@ -6939,21 +6942,20 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   }),
                 ),
               );
-            },
-            (effect, turnInput) =>
-              effect.pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderAdapter.ProviderAdapterTurnStartError({
-                      driver: CODEX_PROVIDER,
-                      threadId: turnInput.threadId,
-                      providerThreadId: turnInput.providerThread.id,
-                      runId: turnInput.runId,
-                      cause,
-                    }),
-                ),
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterTurnStartError({
+                    driver: CODEX_PROVIDER,
+                    threadId: turnInput.threadId,
+                    providerThreadId: turnInput.providerThread.id,
+                    runId: turnInput.runId,
+                    refusedBeforePrompt: !promptDispatched,
+                    cause,
+                  }),
               ),
-          ),
+            );
+          }),
           injectHistory: Effect.fn("CodexAdapterV2.injectHistory")(
             function* (input) {
               const threadId = yield* getNativeThreadId(input.providerThread);
@@ -6986,12 +6988,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ? parseGoalCommand(turnInput.message)
                 : null;
             if (goalCommand !== null) return runGoalCommand(turnInput, goalCommand);
+            let promptDispatched = false;
             return Effect.gen(function* () {
               yield* startNativeTurn(
                 turnInput,
                 turnInput.restartContinuationOfRunId === undefined
                   ? yield* toCodexInput(turnInput)
                   : [],
+                () => {
+                  promptDispatched = true;
+                },
               );
             }).pipe(
               Effect.mapError(
@@ -7001,6 +7007,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     threadId: turnInput.threadId,
                     providerThreadId: turnInput.providerThread.id,
                     runId: turnInput.runId,
+                    refusedBeforePrompt: !promptDispatched,
                     cause,
                   }),
               ),

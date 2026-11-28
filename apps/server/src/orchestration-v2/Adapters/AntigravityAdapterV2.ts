@@ -27,7 +27,10 @@ import {
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
 import {
   antigravityApprovalOptions,
+  antigravitySubagentModel,
   antigravitySubagentOutput,
+  antigravitySubagentPrompt,
+  antigravitySubagentTitle,
   classifyAntigravitySubagentToolCall,
   extractAntigravityUserInputQuestion,
   makeAntigravityReadRepair,
@@ -93,19 +96,23 @@ const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractS
     return undefined;
   }
   const status =
-    toolCall.status === "failed" ? "failed" : toolCall.status === "pending" ? "pending" : "running";
+    toolCall.status === "completed"
+      ? "completed"
+      : toolCall.status === "failed"
+        ? "failed"
+        : toolCall.status === "pending"
+          ? "pending"
+          : "running";
+  const output = antigravitySubagentOutput(toolCall) ?? null;
   return {
     nativeTaskId: toolCall.toolCallId,
-    prompt:
-      antigravitySubagentOutput(toolCall) ??
-      toolCall.detail ??
-      toolCall.title ??
-      "Antigravity subagent batch",
-    title: "Antigravity subagent batch",
-    model: null,
+    prompt: antigravitySubagentPrompt(toolCall) ?? "Antigravity subagent",
+    title: antigravitySubagentTitle(toolCall),
+    model: antigravitySubagentModel(toolCall),
     status,
     childSessionId: null,
-    result: status === "failed" ? (antigravitySubagentOutput(toolCall) ?? null) : null,
+    result: status === "completed" || status === "failed" ? output : null,
+    suppressNormalTool: false,
   };
 };
 
@@ -216,8 +223,7 @@ export function makeAntigravityAcpAdapterFlavor(
         Effect.provideService(FileSystem.FileSystem, options.fileSystem),
         Effect.provideService(Path.Path, options.path),
       ),
-    // Loading history replays tool calls; resume avoids replay.
-    subagentsIdleOnTurnCompletion: true,
+    settleSubagentsOnTurnCompletion: true,
     ...(options.onSessionEvent === undefined ? {} : { onSessionEvent: options.onSessionEvent }),
     applyModelSelection: Effect.fn("AntigravityAdapterV2.applyModelSelection")(function* ({
       runtime,

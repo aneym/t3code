@@ -316,7 +316,7 @@ export interface AcpAdapterV2Flavor {
   readonly onSessionEvent?: (
     event: AcpSessionRuntime.AcpSessionRuntimeEvent,
   ) => Effect.Effect<void>;
-  readonly subagentsIdleOnTurnCompletion?: boolean;
+  readonly settleSubagentsOnTurnCompletion?: boolean;
   readonly supportsCompaction?: boolean;
   readonly runtimeHarness?: string;
   readonly registerExtensions?: (
@@ -1241,7 +1241,8 @@ export function acpCompletedTurnShouldTerminalizeTool(
   const status = toolStatus(tool.status);
   if (status !== "pending" && status !== "running") return false;
   if (flavor.extractBackgroundTaskId?.(tool) !== undefined) return false;
-  return flavor.extractSubagentUpdate?.(tool) === undefined;
+  const subagentUpdate = flavor.extractSubagentUpdate?.(tool);
+  return subagentUpdate === undefined || subagentUpdate.suppressNormalTool === false;
 }
 
 interface ActiveAcpSubagent {
@@ -2729,7 +2730,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           // Empty-prompt hydration must match existing lineage; only spawn ACKs can create it.
           if (existing === undefined) {
             const isHydrationOnly = update.prompt === "" && update.title === null;
-            if (isHydrationOnly || update.suppressNormalTool === false) {
+            if (isHydrationOnly) {
               return;
             }
           }
@@ -3545,9 +3546,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
 
           // Monitor TaskOutput resembles subagent hydration; do not invent a subagent.
-          const subagentUpdate = hydratedRegisteredMonitor
-            ? undefined
-            : extractSubagentUpdate(toolCall);
+          const subagentUpdate =
+            hydratedRegisteredMonitor || projectedStatus !== undefined
+              ? undefined
+              : extractSubagentUpdate(toolCall);
           if (subagentUpdate !== undefined) {
             yield* emitSubagent(context, subagentUpdate);
             if (followsAgentWorkState) yield* syncNativeChildren(context);
@@ -6988,7 +6990,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           context.finalizedStatus = settledStatus;
           context.finalized = true;
           const directStopQuarantine = yield* Ref.get(stoppedRunQuarantine);
-          if (flavor.subagentsIdleOnTurnCompletion === true) {
+          if (flavor.settleSubagentsOnTurnCompletion === true) {
             for (const subagent of context.subagents.values()) {
               if (!acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) continue;
               yield* emitSubagent(context, {
@@ -6996,9 +6998,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 prompt: subagent.task.prompt,
                 title: subagent.task.title,
                 model: subagent.task.model,
-                status: settledStatus === "completed" ? "idle" : settledStatus,
+                status: settledStatus,
                 childSessionId: subagent.childSessionId,
-                result: null,
+                result: subagent.task.result,
               });
             }
           }
@@ -7021,6 +7023,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             settledStatus === "completed"
           ) {
             const nativeItemId = `${context.nativeTurnId}:compaction`;
+            const beforeTokenCount = context.contextUsage?.usedTokens;
+            context.contextUsage = null;
+            yield* Ref.update(contextUsageBySessionId, (current) => {
+              const updated = new Map(current);
+              updated.delete(context.nativeThreadId);
+              return updated;
+            });
             yield* Ref.update(compactionMarkers, (current) => {
               const updated = new Map(current);
               updated.set(context.nativeThreadId, Symbol());
@@ -7043,6 +7052,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 driver,
                 status: "completed",
                 title: "Context compacted",
+                ...(beforeTokenCount === undefined ? {} : { beforeTokenCount }),
                 startedAt: context.startedAt,
                 completedAt: now,
                 updatedAt: now,
@@ -7326,8 +7336,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return true;
         });
 
-        const startTurnUnlocked = Effect.fn("AcpAdapterV2.startTurn")(
-          function* (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
+        const startTurnUnlocked = Effect.fn("AcpAdapterV2.startTurn")(function* (
+          turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+        ) {
+          let promptDispatched = false;
+          return yield* Effect.gen(function* () {
             yield* awaitRuntimeTeardown();
             const existing = yield* Ref.get(activeTurn);
             if (existing !== null) {
@@ -7604,6 +7617,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               return;
             }
             const promptGeneration = yield* Ref.get(runtimeCallbackGeneration);
+            promptDispatched = true;
             yield* runtime.prompt({ prompt: promptParts!.prompt }).pipe(
               Effect.tap(() =>
                 Ref.update(promptInstructionStates, (current) => {
@@ -7716,21 +7730,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ),
               Effect.forkIn(sessionScope),
             );
-          },
-          (effect, turnInput) =>
-            effect.pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterTurnStartError({
-                    driver,
-                    threadId: turnInput.threadId,
-                    providerThreadId: turnInput.providerThread.id,
-                    runId: turnInput.runId,
-                    cause,
-                  }),
-              ),
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapter.ProviderAdapterTurnStartError({
+                  driver,
+                  threadId: turnInput.threadId,
+                  providerThreadId: turnInput.providerThread.id,
+                  runId: turnInput.runId,
+                  refusedBeforePrompt: !promptDispatched,
+                  cause,
+                }),
             ),
-        );
+          );
+        });
 
         const startTurn = Effect.fn("AcpAdapterV2.startTurn.transition")(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,

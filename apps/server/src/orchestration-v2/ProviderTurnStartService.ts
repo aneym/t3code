@@ -106,29 +106,61 @@ const isProviderAdapterOpenSessionError = Schema.is(
   ProviderAdapter.ProviderAdapterOpenSessionError,
 );
 
-/**
- * Claude refuses these before it reads the prompt: replacing a process running background work,
- * launch arguments whose appended system prompt or settings cannot be read, or MCP registration
- * that never answers while the query opens.
- */
 const PROMPT_REFUSAL_TAGS = [
   "ClaudeBackgroundWorkBlocksQueryReplacementError",
   "ClaudeAppendSystemPromptFileError",
   "ClaudeAppendSystemPromptMissingValueError",
   "ClaudeSettingsLaunchArgError",
   "ClaudeMcpRegistrationTimeoutError",
+  "AcpModelSelectionError",
+  "CursorModelUnavailableError",
 ] as const;
 
-const refusedBeforePrompt = (error: unknown): boolean =>
-  PROMPT_REFUSAL_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
-  (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
+const PROMPT_REFUSAL_PROTOCOL_REASONS = new Set<ProviderAdapter.ProviderAdapterFailureReason>([
+  "previous_turn_active",
+  "attachment_unreadable",
+]);
 
-// The provider may have acted on a request it never answered, so a retry could duplicate it.
 const OUTCOME_UNKNOWN_TAGS = ["CodexAppServerUnresponsiveError"] as const;
 
-const outcomeUnknown = (error: unknown): boolean =>
-  OUTCOME_UNKNOWN_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
-  (Predicate.hasProperty(error, "cause") && outcomeUnknown(error.cause));
+const outcomeUnknown = (error: unknown, seen = new Set<unknown>()): boolean => {
+  if (error === null || typeof error !== "object" || seen.has(error)) return false;
+  seen.add(error);
+  return (
+    OUTCOME_UNKNOWN_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
+    (Predicate.hasProperty(error, "cause") && outcomeUnknown(error.cause, seen))
+  );
+};
+
+const refusedBeforePrompt = (error: unknown): boolean => {
+  if (outcomeUnknown(error)) return false;
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  while (current !== null && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    if (
+      Predicate.hasProperty(current, "refusedBeforePrompt") &&
+      typeof current.refusedBeforePrompt === "boolean"
+    ) {
+      return current.refusedBeforePrompt;
+    }
+    if (PROMPT_REFUSAL_TAGS.some((tag) => Predicate.isTagged(current, tag))) {
+      return true;
+    }
+    if (
+      Predicate.isTagged(current, "ProviderAdapterProtocolError") &&
+      Predicate.hasProperty(current, "reason") &&
+      typeof current.reason === "string" &&
+      PROMPT_REFUSAL_PROTOCOL_REASONS.has(
+        current.reason as ProviderAdapter.ProviderAdapterFailureReason,
+      )
+    ) {
+      return true;
+    }
+    current = Predicate.hasProperty(current, "cause") ? current.cause : null;
+  }
+  return false;
+};
 
 export interface ProviderTurnStartServiceV2Shape {
   readonly start: (input: {

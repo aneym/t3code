@@ -6,7 +6,10 @@ import * as AcpWireSchema from "effect-acp/schema-v1";
 import {
   extractAntigravityUserInputQuestion,
   antigravityApprovalOptions,
+  antigravitySubagentModel,
   antigravitySubagentOutput,
+  antigravitySubagentPrompt,
+  antigravitySubagentTitle,
   classifyAntigravitySubagentToolCall,
   isAntigravityUserInputRequest,
   makeAntigravityUserInputResponse,
@@ -71,6 +74,51 @@ describe("native Antigravity subagent tools", () => {
     expect(
       antigravitySubagentOutput({ toolCallId: "trajectory:4", data: { rawOutput: {} } }),
     ).toBeUndefined();
+    expect(
+      antigravitySubagentOutput({
+        toolCallId: "trajectory:4",
+        data: { rawOutput: { result: "  Verified clean.  " } },
+      }),
+    ).toBe("Verified clean.");
+    expect(
+      antigravitySubagentOutput({
+        toolCallId: "trajectory:4",
+        data: {
+          content: [{ type: "content", content: { type: "text", text: "Content summary." } }],
+        },
+      }),
+    ).toBe("Content summary.");
+  });
+
+  it("extracts subagent prompt, title, and model from input without reading rawOutput", () => {
+    const toolCall = {
+      toolCallId: "trajectory:5",
+      title: "Running invoke_subagent",
+      data: {
+        rawInput: {
+          Prompt: "Audit provider compaction",
+          Role: "Codebase Auditor",
+          Model: "gemini-4-neon",
+        },
+        rawOutput: "Completed audit findings.",
+      },
+    };
+    expect(antigravitySubagentPrompt(toolCall)).toBe("Audit provider compaction");
+    expect(antigravitySubagentTitle(toolCall)).toBe("Codebase Auditor");
+    expect(antigravitySubagentModel(toolCall)).toBe("gemini-4-neon");
+    expect(
+      antigravitySubagentPrompt({
+        toolCallId: "trajectory:6",
+        title: "Running start_subagent",
+        data: { rawOutput: "Output must never become prompt." },
+      }),
+    ).toBe("Running start_subagent");
+    expect(
+      antigravitySubagentModel({
+        toolCallId: "trajectory:7",
+        data: { rawInput: { Model: "inherit" } },
+      }),
+    ).toBeNull();
   });
 });
 

@@ -1080,6 +1080,122 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.live("clears contextUsage and remembered session usage after synthetic /compact", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+      const instanceId = ProviderInstanceId.make("acp-test-synthetic-compact-usage");
+      const threadId = ThreadId.make("thread-acp-synthetic-compact-usage");
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      type SessionUpdateHandler = Parameters<RuntimeService["handleSessionUpdate"]>[0];
+      let sessionUpdate: SessionUpdateHandler | undefined;
+      let promptCalls = 0;
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          supportsCompaction: true,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            protocolEvents,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  sessionUpdate = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              prompt: (payload, options) =>
+                Effect.gen(function* () {
+                  promptCalls += 1;
+                  if (promptCalls === 1 && sessionUpdate !== undefined) {
+                    yield* sessionUpdate({
+                      sessionId: "mock-session-1",
+                      update: {
+                        sessionUpdate: "usage_update",
+                        used: 120_000,
+                        size: 200_000,
+                      },
+                    });
+                  }
+                  return yield* runtime
+                    .prompt(payload, options)
+                    .pipe(Effect.tap(() => runtime.drainEvents));
+                }),
+            }),
+          }),
+        },
+        selfInvocation,
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-synthetic-compact-usage"),
+        modelSelection,
+        runtimePolicy,
+      });
+      let providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+      const now = yield* DateTime.now;
+      const runTurn = (ordinal: number, messageText: string) =>
+        Effect.gen(function* () {
+          yield* runtime.startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              now,
+              ordinal,
+              messageText,
+            }),
+          );
+          const turnEvents = Array.from(
+            yield* runtime.events.pipe(
+              Stream.takeUntil((event) => event.type === "turn.terminal"),
+              Stream.runCollect,
+            ),
+          );
+          const latestThread = turnEvents.findLast(
+            (event) => event.type === "provider_thread.updated",
+          );
+          if (latestThread?.type === "provider_thread.updated") {
+            providerThread = latestThread.providerThread;
+          }
+          return turnEvents;
+        });
+
+      yield* runTurn(1, "Fill context.");
+      assert.equal(providerThread.contextUsage?.usedTokens, 120_000);
+
+      const compactEvents = yield* runTurn(2, "/compact");
+      const compactionItem = compactEvents.findLast(
+        (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
+      );
+      assert.equal(compactionItem?.type, "turn_item.updated");
+      if (
+        compactionItem?.type === "turn_item.updated" &&
+        compactionItem.turnItem.type === "compaction"
+      ) {
+        assert.equal(compactionItem.turnItem.beforeTokenCount, 120_000);
+      }
+      assert.isNull(providerThread.contextUsage);
+
+      yield* runTurn(3, "Continue after compact.");
+      assert.isNull(providerThread.contextUsage);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.live("reapplies a selection after a switch away from it failed partway", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
