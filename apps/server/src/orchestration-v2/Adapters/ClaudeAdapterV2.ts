@@ -3686,7 +3686,8 @@ function providerFailureFromResult(
     message: listedError ?? structuredError ?? failureHint ?? message.result,
     code:
       apiErrorStatus === null
-        ? (message.terminal_reason ?? "sdk_result_error")
+        ? (message.terminal_reason ??
+          (message.stop_reason === "refusal" ? "refusal" : "sdk_result_error"))
         : `api_error_${apiErrorStatus}`,
     class: failureClass,
     retryable: apiErrorStatus === 429 || apiErrorStatus === 529 ? true : null,
@@ -3907,6 +3908,30 @@ interface ActiveClaudeTurnContext {
   nativeWakeStarted: boolean;
   gatedFramesBeforeEcho: number;
   readonly heldRootFrames: Array<SDKMessage>;
+  readonly loggedRefusalKeys: Set<string>;
+  readonly loggedModelMismatches: Set<string>;
+  readonly refusalFallbackModels: Set<string>;
+  readonly pendingModelMismatchNotices: Array<{
+    readonly requestedModel: string;
+    readonly actualModel: string;
+    readonly canonicalActual: string;
+  }>;
+  refusalNoticeEmitted: boolean;
+  streamMessageModel: string | null;
+  lastRootModel: string | null;
+  lastRefusal: ClaudeTurnRefusal | null;
+}
+
+interface ClaudeStopDetails {
+  readonly type: string | null;
+  readonly category: string | null;
+  readonly explanation: string | null;
+}
+
+interface ClaudeTurnRefusal {
+  readonly stopReason: string | null;
+  readonly stopDetails: ClaudeStopDetails | null;
+  readonly model: string | null;
 }
 
 interface ActiveClaudeProviderRetry {
@@ -4002,6 +4027,65 @@ interface PendingClaudeSubagentLaunch {
 
 function canonicalClaudeSubagentModel(catalog: ClaudeModelCatalog, model: string): string {
   return resolveClaudeModelSlug(catalog, model);
+}
+
+function normalizeClaudeModelForComparison(catalog: ClaudeModelCatalog, model: string): string {
+  const trimmed = model.trim();
+  if (trimmed.length === 0) return "";
+  const trimmedLower = trimmed.toLowerCase();
+  if (catalog.models.some((entry) => entry.model.slug.toLowerCase() === trimmedLower)) {
+    return trimmedLower;
+  }
+  const direct = resolveClaudeModelSlug(catalog, trimmed);
+  if (direct !== trimmed) return direct.toLowerCase();
+  const withoutBracket = trimmed.replace(/\[[^\]]+\]$/u, "");
+  const byBracket = resolveClaudeModelSlug(catalog, withoutBracket);
+  if (byBracket !== withoutBracket) return byBracket.toLowerCase();
+  const stripped = withoutBracket
+    .toLowerCase()
+    .replace(/^(?:[a-z0-9-]+\.)?anthropic\./u, "")
+    .replace(/-v\d+(?::\d+)?$/u, "")
+    .replace(/(?:[-@]\d{8}|-latest)$/u, "");
+  const byStripped = resolveClaudeModelSlug(catalog, stripped);
+  if (byStripped !== stripped) return byStripped.toLowerCase();
+  return stripped.startsWith("claude-") ? stripped.replace(/(\d)\.(\d)/gu, "$1-$2") : stripped;
+}
+
+function sanitizeClaudeRefusalText(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed.slice(0, 500);
+}
+
+function claudeStopDetailsFromUnknown(value: unknown): ClaudeStopDetails | null {
+  if (typeof value !== "object" || value === null) return null;
+  const type = sanitizeClaudeRefusalText(Reflect.get(value, "type"));
+  const category = sanitizeClaudeRefusalText(Reflect.get(value, "category"));
+  const explanation = sanitizeClaudeRefusalText(Reflect.get(value, "explanation"));
+  if (type === null && category === null && explanation === null) return null;
+  return { type, category, explanation };
+}
+
+function formatClaudeRefusalNotice(refusal: ClaudeTurnRefusal): string {
+  const category = refusal.stopDetails?.category ?? null;
+  const explanation = refusal.stopDetails?.explanation ?? null;
+  if (category !== null && explanation !== null) {
+    return `Claude refused to complete this response (${category}): ${explanation}`;
+  }
+  if (explanation !== null) {
+    return `Claude refused to complete this response: ${explanation}`;
+  }
+  if (category !== null) {
+    return `Claude refused to complete this response (${category}).`;
+  }
+  return "Claude refused to complete this response.";
+}
+
+function formatClaudeModelMismatchNotice(input: {
+  readonly requestedModel: string;
+  readonly actualModel: string;
+}): string {
+  return `Requested model ${input.requestedModel}, but Claude responded with ${input.actualModel}.`;
 }
 
 function claudeSubagentModelSelection(
@@ -5376,6 +5460,175 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             context.itemOrdinals.set(nativeItemId, ordinal);
             return ordinal;
           });
+
+        const emitTurnSystemNotice = Effect.fn("ClaudeAdapterV2.emitTurnSystemNotice")(
+          function* (input: {
+            readonly context: ActiveClaudeTurnContext;
+            readonly nativeItemId: string;
+            readonly strength: "strong" | "weak";
+            readonly title: string;
+            readonly message: string;
+            readonly now: DateTime.Utc;
+          }) {
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CLAUDE_PROVIDER,
+              turnItem: {
+                id: idAllocator.derive.turnItemFromProviderItem({
+                  driver: CLAUDE_PROVIDER,
+                  nativeItemId: input.nativeItemId,
+                }),
+                threadId: input.context.input.threadId,
+                runId: input.context.input.runId,
+                nodeId: input.context.input.rootNodeId,
+                providerThreadId: input.context.input.providerThread.id,
+                providerTurnId: input.context.providerTurnId,
+                nativeItemRef: {
+                  driver: CLAUDE_PROVIDER,
+                  nativeId: input.nativeItemId,
+                  strength: input.strength,
+                },
+                parentItemId: null,
+                ordinal: yield* resolveItemOrdinal(input.context, input.nativeItemId),
+                type: "system_notice",
+                status: "completed",
+                title: input.title,
+                message: input.message,
+                startedAt: input.now,
+                completedAt: input.now,
+                updatedAt: input.now,
+              },
+            });
+          },
+        );
+
+        const requestedModelForTurn = (
+          context: ActiveClaudeTurnContext,
+          liveQuery: ClaudeLiveQueryContext | null,
+        ): string =>
+          (isClaudeProviderContinuationTurn(context.input) && liveQuery !== null
+            ? liveQuery.selection.apiModelId
+            : context.input.modelSelection.model
+          ).trim();
+
+        const observeClaudeRefusal = Effect.fn("ClaudeAdapterV2.observeClaudeRefusal")(
+          function* (input: {
+            readonly context: ActiveClaudeTurnContext;
+            readonly liveQuery: ClaudeLiveQueryContext | null;
+            readonly source: "stream_event" | "assistant" | "result";
+            readonly parentToolUseId: string | null;
+            readonly messageId: string | null;
+            readonly model: string | null;
+            readonly requestId: string | null;
+            readonly stopReason: string | null;
+            readonly stopDetails: ClaudeStopDetails | null;
+          }) {
+            if (input.stopReason !== "refusal" && input.stopDetails === null) return;
+            const previousRoot = input.parentToolUseId === null ? input.context.lastRefusal : null;
+            if (input.parentToolUseId === null) {
+              input.context.lastRefusal = {
+                stopReason: input.stopReason ?? previousRoot?.stopReason ?? null,
+                stopDetails: input.stopDetails ?? previousRoot?.stopDetails ?? null,
+                model: input.model ?? previousRoot?.model ?? null,
+              };
+            }
+            if (
+              input.source === "result" &&
+              previousRoot !== null &&
+              (input.stopDetails === null ||
+                (input.stopDetails.type === previousRoot.stopDetails?.type &&
+                  input.stopDetails.category === previousRoot.stopDetails?.category &&
+                  input.stopDetails.explanation === previousRoot.stopDetails?.explanation))
+            ) {
+              return;
+            }
+            const key = [
+              input.parentToolUseId ?? "root",
+              input.messageId ?? input.source,
+              input.stopReason ?? "",
+              input.stopDetails?.type ?? "",
+              input.stopDetails?.category ?? "",
+              input.stopDetails?.explanation ?? "",
+            ].join("|");
+            if (input.context.loggedRefusalKeys.has(key)) return;
+            input.context.loggedRefusalKeys.add(key);
+            yield* Effect.logWarning("orchestration-v2.claude-refusal", {
+              source: input.source,
+              runId: input.context.input.runId,
+              turnId: input.context.providerTurnId,
+              providerTurnId: input.context.providerTurnId,
+              threadId: input.context.input.threadId,
+              model: input.model,
+              requestedModel: requestedModelForTurn(input.context, input.liveQuery),
+              stop_reason: input.stopReason,
+              stop_details: input.stopDetails,
+              ...(input.stopDetails === null
+                ? {}
+                : {
+                    stop_details_type: input.stopDetails.type,
+                    stop_details_category: input.stopDetails.category,
+                    stop_details_explanation: input.stopDetails.explanation,
+                  }),
+              ...(input.messageId === null ? {} : { messageId: input.messageId }),
+              ...(input.requestId === null ? {} : { requestId: input.requestId }),
+              ...(input.parentToolUseId === null ? {} : { parentToolUseId: input.parentToolUseId }),
+            });
+          },
+        );
+
+        const observeRootModelMismatch = Effect.fn("ClaudeAdapterV2.observeRootModelMismatch")(
+          function* (input: {
+            readonly context: ActiveClaudeTurnContext;
+            readonly liveQuery: ClaudeLiveQueryContext | null;
+            readonly source: "stream_event" | "assistant";
+            readonly actualModel: string;
+            readonly messageId: string | null;
+            readonly requestId: string | null;
+          }) {
+            const actualModel = input.actualModel.trim();
+            if (actualModel.length === 0 || actualModel === "<synthetic>") return;
+            const requestedModel = requestedModelForTurn(input.context, input.liveQuery);
+            if (requestedModel.length === 0 || requestedModel.toLowerCase() === "default") return;
+            const canonicalRequested = normalizeClaudeModelForComparison(
+              subagentModelCatalog,
+              requestedModel,
+            );
+            const canonicalActual = normalizeClaudeModelForComparison(
+              subagentModelCatalog,
+              actualModel,
+            );
+            if (
+              canonicalRequested.length === 0 ||
+              canonicalActual.length === 0 ||
+              canonicalRequested === canonicalActual
+            ) {
+              return;
+            }
+            const pairKey = `${canonicalRequested}=>${canonicalActual}`;
+            if (input.context.loggedModelMismatches.has(pairKey)) return;
+            input.context.loggedModelMismatches.add(pairKey);
+            yield* Effect.logWarning("orchestration-v2.claude-model-mismatch", {
+              source: input.source,
+              runId: input.context.input.runId,
+              turnId: input.context.providerTurnId,
+              providerTurnId: input.context.providerTurnId,
+              threadId: input.context.input.threadId,
+              requestedModel,
+              canonicalRequestedModel: canonicalRequested,
+              model: actualModel,
+              canonicalModel: canonicalActual,
+              ...(input.messageId === null ? {} : { messageId: input.messageId }),
+              ...(input.requestId === null ? {} : { requestId: input.requestId }),
+            });
+            if (!input.context.refusalFallbackModels.has(canonicalActual)) {
+              input.context.pendingModelMismatchNotices.push({
+                requestedModel,
+                actualModel,
+                canonicalActual,
+              });
+            }
+          },
+        );
 
         const emitSessionRestartNotice = Effect.fn("ClaudeAdapterV2.emitSessionRestartNotice")(
           function* (notice: string) {
@@ -7383,6 +7636,37 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
           }
 
+          if (input.context.lastRefusal !== null && !input.context.refusalNoticeEmitted) {
+            input.context.refusalNoticeEmitted = true;
+            const notice = formatClaudeRefusalNotice(input.context.lastRefusal);
+            input.context.assistant.noticeTexts.add(notice);
+            yield* emitTurnSystemNotice({
+              context: input.context,
+              nativeItemId: `refusal:${input.context.providerTurnId}`,
+              strength: "weak",
+              title: notice,
+              message: notice,
+              now: input.completedAt,
+            });
+          }
+
+          if (input.context.pendingModelMismatchNotices.length > 0) {
+            const pending = input.context.pendingModelMismatchNotices.splice(0);
+            for (const mismatch of pending) {
+              if (input.context.refusalFallbackModels.has(mismatch.canonicalActual)) continue;
+              const notice = formatClaudeModelMismatchNotice(mismatch);
+              input.context.assistant.noticeTexts.add(notice);
+              yield* emitTurnSystemNotice({
+                context: input.context,
+                nativeItemId: `model-mismatch:${input.context.providerTurnId}:${mismatch.canonicalActual}`,
+                strength: "weak",
+                title: notice,
+                message: notice,
+                now: input.completedAt,
+              });
+            }
+          }
+
           const threadDisposition = input.threadDisposition ?? "reusable";
           const terminalEvent: ProviderAdapter.ProviderAdapterV2Event =
             input.status === "failed"
@@ -8228,12 +8512,58 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               context.streamUsage =
                 usage === undefined ? null : { messageId: event.message.id, usage };
               if (usage !== undefined) yield* emitContextUsage(context, usage, true);
+              if (input.replayed !== true) {
+                const startModel =
+                  typeof event.message.model === "string" ? event.message.model.trim() : "";
+                if (startModel.length > 0 && startModel !== "<synthetic>") {
+                  context.streamMessageModel = startModel;
+                  context.lastRootModel = startModel;
+                  yield* observeRootModelMismatch({
+                    context,
+                    liveQuery,
+                    source: "stream_event",
+                    actualModel: startModel,
+                    messageId: event.message.id,
+                    requestId: null,
+                  });
+                }
+                const startStopDetails = claudeStopDetailsFromUnknown(event.message.stop_details);
+                if (event.message.stop_reason === "refusal" || startStopDetails !== null) {
+                  yield* observeClaudeRefusal({
+                    context,
+                    liveQuery,
+                    source: "stream_event",
+                    parentToolUseId: null,
+                    messageId: event.message.id,
+                    model: startModel.length > 0 ? startModel : null,
+                    requestId: null,
+                    stopReason: event.message.stop_reason,
+                    stopDetails: startStopDetails,
+                  });
+                }
+              }
             } else if (event.type === "message_delta") {
               const usage: typeof event.usage | undefined = event.usage;
               const stream = context.streamUsage;
               if (stream?.usage && usage !== undefined) {
                 stream.usage = mergeClaudeStreamUsage(stream.usage, usage);
                 yield* emitContextUsage(context, stream.usage);
+              }
+              if (input.replayed !== true) {
+                const deltaStopDetails = claudeStopDetailsFromUnknown(event.delta.stop_details);
+                if (event.delta.stop_reason === "refusal" || deltaStopDetails !== null) {
+                  yield* observeClaudeRefusal({
+                    context,
+                    liveQuery,
+                    source: "stream_event",
+                    parentToolUseId: null,
+                    messageId: reasoning.messageId ?? stream?.messageId ?? null,
+                    model: context.streamMessageModel ?? context.lastRootModel,
+                    requestId: null,
+                    stopReason: event.delta.stop_reason,
+                    stopDetails: deltaStopDetails,
+                  });
+                }
               }
             } else if (
               event.type === "content_block_start" &&
@@ -8521,39 +8851,82 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (
             message.type === "system" &&
             (message.subtype === "model_refusal_fallback" ||
+              message.subtype === "model_refusal_no_fallback" ||
               (message.subtype === "informational" && message.level !== "info"))
           ) {
             const now = yield* DateTime.now;
             const nativeItemId = message.uuid;
-            context.assistant.noticeTexts.add(message.content);
-            yield* emitProviderEvent({
-              type: "turn_item.updated",
-              driver: CLAUDE_PROVIDER,
-              turnItem: {
-                id: idAllocator.derive.turnItemFromProviderItem({
-                  driver: CLAUDE_PROVIDER,
-                  nativeItemId,
-                }),
-                threadId: context.input.threadId,
+            if (message.subtype === "model_refusal_fallback") {
+              const stopDetails = claudeStopDetailsFromUnknown({
+                type: "refusal",
+                category: message.api_refusal_category ?? null,
+                explanation: message.api_refusal_explanation ?? null,
+              });
+              yield* Effect.logWarning("orchestration-v2.claude-model-refusal-fallback", {
                 runId: context.input.runId,
-                nodeId: context.input.rootNodeId,
-                providerThreadId: context.input.providerThread.id,
+                turnId: context.providerTurnId,
                 providerTurnId: context.providerTurnId,
-                nativeItemRef: {
-                  driver: CLAUDE_PROVIDER,
-                  nativeId: nativeItemId,
-                  strength: "strong",
-                },
-                parentItemId: null,
-                ordinal: yield* resolveItemOrdinal(context, nativeItemId),
-                type: "system_notice",
-                status: "completed",
-                title: message.content,
-                message: message.content,
-                startedAt: now,
-                completedAt: now,
-                updatedAt: now,
-              },
+                threadId: context.input.threadId,
+                model: message.original_model,
+                fallbackModel: message.fallback_model,
+                requestedModel: requestedModelForTurn(context, liveQuery),
+                direction: message.direction,
+                scope: message.scope ?? "session",
+                stop_reason: "refusal",
+                stop_details: stopDetails,
+                ...(stopDetails === null
+                  ? {}
+                  : {
+                      stop_details_type: stopDetails.type,
+                      stop_details_category: stopDetails.category,
+                      stop_details_explanation: stopDetails.explanation,
+                    }),
+                ...(message.request_id === null ? {} : { requestId: message.request_id }),
+              });
+              if (message.scope !== "local") {
+                context.refusalNoticeEmitted = true;
+                const canonicalFallback = normalizeClaudeModelForComparison(
+                  subagentModelCatalog,
+                  message.fallback_model,
+                );
+                if (canonicalFallback.length > 0) {
+                  context.refusalFallbackModels.add(canonicalFallback);
+                }
+              }
+            } else if (message.subtype === "model_refusal_no_fallback") {
+              const stopDetails = claudeStopDetailsFromUnknown({
+                type: "refusal",
+                category: message.api_refusal_category ?? null,
+                explanation: message.api_refusal_explanation ?? null,
+              });
+              yield* Effect.logWarning("orchestration-v2.claude-model-refusal-no-fallback", {
+                runId: context.input.runId,
+                turnId: context.providerTurnId,
+                providerTurnId: context.providerTurnId,
+                threadId: context.input.threadId,
+                model: message.original_model,
+                requestedModel: requestedModelForTurn(context, liveQuery),
+                stop_reason: "refusal",
+                stop_details: stopDetails,
+                ...(stopDetails === null
+                  ? {}
+                  : {
+                      stop_details_type: stopDetails.type,
+                      stop_details_category: stopDetails.category,
+                      stop_details_explanation: stopDetails.explanation,
+                    }),
+                ...(message.request_id === null ? {} : { requestId: message.request_id }),
+              });
+              context.refusalNoticeEmitted = true;
+            }
+            context.assistant.noticeTexts.add(message.content);
+            yield* emitTurnSystemNotice({
+              context,
+              nativeItemId,
+              strength: "strong",
+              title: message.content,
+              message: message.content,
+              now,
             });
             return;
           }
@@ -8631,6 +9004,35 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const parentToolUseId = message.parent_tool_use_id;
             const snapshotModel =
               typeof message.message.model === "string" ? message.message.model.trim() : "";
+            const assistantStopDetails = claudeStopDetailsFromUnknown(message.message.stop_details);
+            if (message.message.stop_reason === "refusal" || assistantStopDetails !== null) {
+              yield* observeClaudeRefusal({
+                context,
+                liveQuery,
+                source: "assistant",
+                parentToolUseId,
+                messageId: message.message.id,
+                model: snapshotModel.length > 0 ? snapshotModel : null,
+                requestId: message.request_id ?? null,
+                stopReason: message.message.stop_reason,
+                stopDetails: assistantStopDetails,
+              });
+            }
+            if (
+              parentToolUseId === null &&
+              snapshotModel.length > 0 &&
+              snapshotModel !== "<synthetic>"
+            ) {
+              context.lastRootModel = snapshotModel;
+              yield* observeRootModelMismatch({
+                context,
+                liveQuery,
+                source: "assistant",
+                actualModel: snapshotModel,
+                messageId: message.message.id,
+                requestId: message.request_id ?? null,
+              });
+            }
             // "<synthetic>" identifies CLI notices, not the subagent model.
             const model =
               snapshotModel.length === 0 || snapshotModel === "<synthetic>"
@@ -9224,6 +9626,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               next.delete(context.providerTurnId);
               return next;
             });
+            const resultStopDetails = claudeStopDetailsFromUnknown(
+              Reflect.get(message, "stop_details"),
+            );
+            if (message.stop_reason === "refusal" || resultStopDetails !== null) {
+              yield* observeClaudeRefusal({
+                context,
+                liveQuery,
+                source: "result",
+                parentToolUseId: null,
+                messageId: null,
+                model: context.lastRootModel,
+                requestId: null,
+                stopReason: message.stop_reason,
+                stopDetails: resultStopDetails,
+              });
+            }
             const usageLimited =
               context.authenticationFailureMessage === undefined &&
               (context.rejectedRateLimitTypes.size > 0 ||
@@ -9242,7 +9660,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : (context.authenticationFailureMessage ??
                 (usageLimited
                   ? "Claude usage limit reached. Send the message again once the limit resets."
-                  : undefined));
+                  : message.subtype === "success" &&
+                      message.is_error &&
+                      message.result.trim().length === 0 &&
+                      context.lastRefusal !== null
+                    ? formatClaudeRefusalNotice(context.lastRefusal)
+                    : undefined));
             // Usage-limited /compact reports success; fail it so queued messages wait for the limit to clear.
             const limitedCompaction =
               usageLimited && message.subtype === "success" && message.local_command === "compact"
@@ -10238,6 +10661,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               nativeWakeStarted: false,
               gatedFramesBeforeEcho: 0,
               heldRootFrames: [],
+              loggedRefusalKeys: new Set(),
+              loggedModelMismatches: new Set(),
+              refusalFallbackModels: new Set(),
+              pendingModelMismatchNotices: [],
+              refusalNoticeEmitted: false,
+              streamMessageModel: null,
+              lastRootModel: null,
+              lastRefusal: null,
             };
             const attachTurn = Effect.gen(function* () {
               querySession.lastTurn = context;
