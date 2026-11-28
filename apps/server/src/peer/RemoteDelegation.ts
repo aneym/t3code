@@ -52,9 +52,8 @@ import { delegatedChildDefaultModel, remoteChildOptions } from "../mcp/delegated
 import { remoteDelegateCommandId } from "../mcp/delegateRetry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import {
-  AGENT_HOME_KEY_PREFIX,
   agentHomeKeysOfRoot,
-  isAgentShellHomePath,
+  matchAgentHomeProjects,
   parseAgentHomeKey,
 } from "../agents/AgentHomeOfPath.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -185,12 +184,11 @@ const make = Effect.gen(function* () {
       (here === undefined
         ? undefined
         : (yield* repositoryIdentities.resolve(here.workspaceRoot))?.canonicalKey);
-    const homeTarget =
+    const homeKeys =
       key !== undefined || here === undefined
-        ? undefined
-        : (yield* Effect.promise(() => agentHomeKeysOfRoot(here.workspaceRoot)))
-            .map(parseAgentHomeKey)
-            .find((parsed) => parsed !== undefined);
+        ? []
+        : yield* Effect.promise(() => agentHomeKeysOfRoot(here.workspaceRoot));
+    const homeTarget = homeKeys.map(parseAgentHomeKey).find((parsed) => parsed !== undefined);
     if (key === undefined && homeTarget === undefined) {
       return yield* new OrchestratorMcpFailure({
         code: "target_required",
@@ -201,6 +199,7 @@ const make = Effect.gen(function* () {
       readonly id: ProjectId;
       readonly title: string;
       readonly workspaceRoot: string;
+      readonly repositoryIdentity?: unknown;
       readonly archivedAt?: string | null | undefined;
     }> = [];
     let cursor: number | null = 0;
@@ -211,36 +210,13 @@ const make = Effect.gen(function* () {
           limit: 100,
         });
       matches.push(
-        ...listed.projects.filter((project) => {
-          if (key !== undefined) return project.repositoryIdentity?.canonicalKey === key;
-          if (project.repositoryIdentity != null) return false;
-          const remoteHome = parseAgentHomeKey(`${AGENT_HOME_KEY_PREFIX}${project.workspaceRoot}`);
-          if (
-            remoteHome !== undefined &&
-            homeTarget !== undefined &&
-            remoteHome.handle === homeTarget.handle &&
-            remoteHome.executor === homeTarget.executor
-          ) {
-            return true;
-          }
-          return here !== undefined && project.workspaceRoot === here.workspaceRoot;
-        }),
+        ...(key !== undefined
+          ? listed.projects.filter((project) => project.repositoryIdentity?.canonicalKey === key)
+          : listed.projects.filter((project) => project.repositoryIdentity == null)),
       );
       cursor = listed.nextCursor;
     }
-    let resolved = matches;
-    if (key === undefined && resolved.length > 1) {
-      const active = resolved.filter((project) => project.archivedAt == null);
-      if (active.length > 0) resolved = active;
-      if (resolved.length > 1) {
-        const shells = resolved.filter((project) => isAgentShellHomePath(project.workspaceRoot));
-        if (shells.length === 1) resolved = shells;
-      }
-      if (resolved.length > 1 && here !== undefined) {
-        const exact = resolved.filter((project) => project.workspaceRoot === here.workspaceRoot);
-        if (exact.length === 1) resolved = exact;
-      }
-    }
+    const resolved = key !== undefined ? matches : matchAgentHomeProjects(matches, homeKeys);
     if (resolved.length === 1) return resolved[0]!.id;
     const homeLabel =
       homeTarget === undefined

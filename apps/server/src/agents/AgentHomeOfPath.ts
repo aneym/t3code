@@ -123,3 +123,47 @@ export const agentHomeKeysOfRoot = async (
 
 export const agentHomeKeyOfRoot = async (workspaceRoot: string) =>
   (await agentHomeKeysOfRoot(workspaceRoot))[0];
+
+export interface AgentHomeProjectCandidate {
+  readonly workspaceRoot: string;
+  readonly repositoryIdentity?: unknown;
+  readonly archivedAt?: string | null | undefined;
+}
+
+export const matchAgentHomeProjects = <T extends AgentHomeProjectCandidate>(
+  projects: ReadonlyArray<T>,
+  wanted: ReadonlyArray<string>,
+): ReadonlyArray<T> => {
+  const exactRoots = new Set<string>();
+  const targets = new Set<string>();
+  for (const key of wanted) {
+    if (key.startsWith(AGENT_HOME_KEY_PREFIX)) {
+      exactRoots.add(key.slice(AGENT_HOME_KEY_PREFIX.length));
+    }
+    const parsed = parseAgentHomeKey(key);
+    if (parsed !== undefined) {
+      targets.add(`${parsed.handle}\u0000${parsed.executor ? "1" : "0"}`);
+    }
+  }
+  if (exactRoots.size === 0 && targets.size === 0) return [];
+  const matches = projects.filter((project) => {
+    if (project.repositoryIdentity != null) return false;
+    if (exactRoots.has(project.workspaceRoot)) return true;
+    const remote = parseAgentHomeKey(`${AGENT_HOME_KEY_PREFIX}${project.workspaceRoot}`);
+    return (
+      remote !== undefined && targets.has(`${remote.handle}\u0000${remote.executor ? "1" : "0"}`)
+    );
+  });
+  if (matches.length <= 1) return matches;
+  const active = matches.filter((project) => project.archivedAt == null);
+  let pool = active.length > 0 ? active : matches;
+  if (pool.length > 1) {
+    const shells = pool.filter((project) => isAgentShellHomePath(project.workspaceRoot));
+    if (shells.length === 1) pool = shells;
+  }
+  if (pool.length > 1 && exactRoots.size > 0) {
+    const exact = pool.filter((project) => exactRoots.has(project.workspaceRoot));
+    if (exact.length === 1) pool = exact;
+  }
+  return pool;
+};

@@ -63,7 +63,10 @@ export const projectsAtAgentHome = Effect.fn("ProjectsByRepository.atAgentHome")
     return { matches: [], complete: true };
   return yield* scan(
     projects,
-    (project) => project.repositoryIdentity == null && project.workspaceRoot === workspaceRoot,
+    (project) =>
+      project.archivedAt == null &&
+      project.repositoryIdentity == null &&
+      project.workspaceRoot === workspaceRoot,
   );
 });
 
