@@ -37,6 +37,7 @@ import {
   groupFullText,
   type GroupLimit,
   healthLineFor,
+  LIGHT_CLASS,
   limitedGroups,
   limitOf,
   type Limits,
@@ -48,9 +49,8 @@ import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
 const TICK = Duration.seconds(1);
-const LIGHT = "light";
 
-const lightFor = (limits: Limits, parent: string) => marksClass(limits, LIGHT, parent);
+const lightFor = (limits: Limits, parent: string) => marksClass(limits, LIGHT_CLASS, parent);
 
 type HeldRun = Pick<OrchestrationV2Run, "id" | "status" | "childStartHeld">;
 
@@ -129,11 +129,15 @@ const make = Effect.gen(function* () {
     config: Config,
     now: number,
     groups: ReadonlyArray<string> = [],
+    light = false,
   ) {
     if (!config.byRoom || config.line === undefined || resources === undefined) return undefined;
     const reading = yield* resources.read;
     return agentPlacementResourcesFresh(reading, now)
-      ? agentPlacementHealthBreach(reading, healthLineFor(config.limits, groups, config.line))
+      ? agentPlacementHealthBreach(
+          reading,
+          healthLineFor(config.limits, groups, config.line, light),
+        )
       : undefined;
   });
 
@@ -246,7 +250,7 @@ const make = Effect.gen(function* () {
           (limitOf(config.limits, group)?.perGroup ?? Infinity) <= (counts.running.get(group) ?? 0),
       );
       const reason =
-        (yield* breachOf(config, now, rowGroups)) ??
+        (yield* breachOf(config, now, rowGroups, row.class === LIGHT_CLASS)) ??
         (rowGroups.includes(EVERY_CHILD) && current.cap !== null && current.active >= current.cap
           ? agentPlacementRoomFull(here, { ...current, free: 0 })
           : undefined) ??
@@ -300,7 +304,7 @@ const make = Effect.gen(function* () {
     const groups = limitedGroups(limits, yield* homeOf(rootProject), {
       provider: owner.provider,
       parent: remote ? null : owner.parentThreadId,
-      class: light ? LIGHT : undefined,
+      class: light ? LIGHT_CLASS : undefined,
     });
     if (groups.length === 0 && !config.byRoom) return undefined;
     const rows = yield* readChildren(config.byRoom).pipe(Effect.orElseSucceed(() => []));
@@ -308,7 +312,9 @@ const make = Effect.gen(function* () {
     const { running, queued } = yield* tally(rows, activeChildren, limits);
     const now = yield* Clock.currentTimeMillis;
     const { counted, started } = claims.count(running, lastStart, now, own);
-    const breach = yield* breachOf(config, now, groups).pipe(Effect.orElseSucceed(() => undefined));
+    const breach = yield* breachOf(config, now, groups, light).pipe(
+      Effect.orElseSucceed(() => undefined),
+    );
     const held =
       breach !== undefined ||
       groups.some(
@@ -341,7 +347,7 @@ const make = Effect.gen(function* () {
           groups,
           held,
           breach,
-          class: light ? LIGHT : null,
+          class: light ? LIGHT_CLASS : null,
         });
         return result;
       }),
@@ -394,7 +400,8 @@ const make = Effect.gen(function* () {
         for (const row of held) {
           const rowGroups = groups.get(row.run_id) ?? [];
           if (rowGroups.some((group) => blocked.has(group))) continue;
-          if ((yield* breachOf(config, now, rowGroups)) !== undefined) continue;
+          if ((yield* breachOf(config, now, rowGroups, row.class === LIGHT_CLASS)) !== undefined)
+            continue;
           const shut = rowGroups.filter((group) => !allows(limits, group, running, started, now));
           if (shut.length > 0) {
             for (const group of shut) blocked.add(group);

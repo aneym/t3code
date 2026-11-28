@@ -19,7 +19,7 @@ export const LinkedEnvironmentServerSettingsFields = {
   agentPlacementHealthLine: AgentPlacementHealthLine.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_AGENT_PLACEMENT_HEALTH_LINE)),
   ),
-  agentPlacementByRoom: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  agentPlacementByRoom: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   agentPlacementAtStart: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   agentPlacementPaused: Schema.NullOr(Schema.String).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),

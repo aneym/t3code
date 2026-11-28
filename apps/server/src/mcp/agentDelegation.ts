@@ -19,6 +19,7 @@ import { checkAllowed, requireAllowed } from "../peer/PlacementAllowed.ts";
 import * as PlacementRoom from "../peer/PlacementRoom.ts";
 import { SpillLaunch } from "../peer/PlacementSpill.ts";
 import * as WorktreeTransfer from "../peer/WorktreeTransfer.ts";
+import { isAgentExecutorHomeRoot } from "../agents/AgentHomeOfPath.ts";
 import * as Projects from "../project/ProjectService.ts";
 import { projectsAtAgentHome } from "../project/ProjectsByRepository.ts";
 import * as Settings from "../serverSettings.ts";
@@ -59,6 +60,7 @@ const unpushedParentCommit = Effect.fn("AgentDelegation.unpushedParentCommit")(f
 const homeProject = Effect.fn("AgentDelegation.homeProject")(function* (
   input: OrchestratorMcpDelegateTaskInput,
   parent: Caller,
+  executorOnly = false,
 ) {
   const projectId = input.target?.projectId ?? parent?.projectId;
   const projects = yield* Effect.serviceOption(Projects.ProjectService);
@@ -67,6 +69,11 @@ const homeProject = Effect.fn("AgentDelegation.homeProject")(function* (
     .getById(projectId)
     .pipe(Effect.orElseSucceed(() => Option.none()));
   if (Option.isNone(project)) return false;
+  if (
+    executorOnly &&
+    !(yield* Effect.promise(() => isAgentExecutorHomeRoot(project.value.workspaceRoot)))
+  )
+    return false;
   const found = yield* projectsAtAgentHome(projects.value, project.value.workspaceRoot).pipe(
     Effect.orElseSucceed(() => ({ matches: [], complete: false })),
   );
@@ -79,7 +86,7 @@ const localOnlyReason = Effect.fn("AgentDelegation.localOnlyReason")(function* (
   spill: boolean,
 ) {
   if (input.isolation !== "worktree")
-    return spill && (yield* homeProject(input, parent))
+    return (yield* homeProject(input, parent, !spill))
       ? undefined
       : "Shared isolation keeps the parent's workspace.";
   if (input.baseRef !== undefined)

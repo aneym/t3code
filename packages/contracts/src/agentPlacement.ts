@@ -231,7 +231,12 @@ export function scoreAgentPlacement(input: {
       : loadPerCore === null
         ? UNKNOWN_RATIO
         : Math.max(0, 1 - loadPerCore / line.maxLoadPerCore);
-  const share = room?.cap != null && room.free !== null ? room.free / room.cap : 1;
+  const share =
+    room?.cap != null && room.free !== null
+      ? room.free / room.cap
+      : room === undefined
+        ? 1
+        : 1 / (1 + Math.max(0, room.active + room.held));
   const score =
     share *
     weight *

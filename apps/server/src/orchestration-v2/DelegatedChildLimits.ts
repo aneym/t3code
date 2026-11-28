@@ -2,6 +2,7 @@ import type { AgentPlacementHealthLine } from "@t3tools/contracts";
 import { readAgentMainThreads } from "../agents/AgentHomeFiles.ts";
 
 export const EVERY_CHILD = "*";
+export const LIGHT_CLASS = "light";
 const LANE = "*lane";
 const LANE_PREFIX = `${LANE}:`;
 const MAIN_THREADS = "agent-main";
@@ -96,7 +97,7 @@ const inParentsPool = (limits: Limits, parent: string) =>
   [...limits.values()].some((limit) => limit.members?.parents?.has(parent) === true);
 
 export const marksClass = (limits: Limits, cls: string, parent: string) =>
-  classPoolOf(limits, cls) !== undefined && !inParentsPool(limits, parent);
+  cls === LIGHT_CLASS || (classPoolOf(limits, cls) !== undefined && !inParentsPool(limits, parent));
 
 const poolOf = (limits: Limits, child: ChildOrigin) => {
   if (child.started_at === null) return undefined;
@@ -120,6 +121,7 @@ export const limitedGroups = (
   aged = false,
 ): ReadonlyArray<string> => {
   const pool = aged ? undefined : poolOf(limits, child);
+  if (!aged && child.class === LIGHT_CLASS) return pool === undefined ? [] : [pool];
   const classed = !aged && inClassPool(limits, child);
   const spared = (limit: GroupLimit) =>
     (child.provider != null && limit.except.has(child.provider)) ||
@@ -179,7 +181,8 @@ export const healthLineFor = (
   limits: Limits,
   groups: ReadonlyArray<string>,
   line: AgentPlacementHealthLine,
+  light = false,
 ): AgentPlacementHealthLine =>
-  groups.some((group) => limits.get(group)?.loadLine === false)
+  light || groups.some((group) => limits.get(group)?.loadLine === false)
     ? { ...line, maxLoadPerCore: Infinity, maxCpuPressure: null }
     : line;

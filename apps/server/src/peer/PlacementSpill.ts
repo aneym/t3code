@@ -1,7 +1,11 @@
 import type { AgentPlacementRoom, AgentPlacementScore, EnvironmentId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import { AGENT_HOME_KEY_PREFIX, agentHomeKeyOfRoot } from "../agents/AgentHomeOfPath.ts";
+import {
+  agentHomeKeysOfRoot,
+  isAgentExecutorHomeRoot,
+  isAgentHomeKey,
+} from "../agents/AgentHomeOfPath.ts";
 import type * as Identities from "../project/RepositoryIdentityResolver.ts";
 import { repositoryIdentityKeys } from "../project/RepositoryIdentityKeys.ts";
 
@@ -15,13 +19,13 @@ export const placementKeys = Effect.fn("PlacementSpill.placementKeys")(function*
   repository: string | undefined,
   spill: boolean,
 ) {
-  if (repository !== undefined)
-    return repository.startsWith(AGENT_HOME_KEY_PREFIX) ? [] : [repository];
+  if (repository !== undefined) return isAgentHomeKey(repository) ? [] : [repository];
   if (workspaceRoot === undefined) return [];
   const keys = repositoryIdentityKeys(yield* identities.resolve(workspaceRoot));
-  if (keys.length > 0 || !spill) return keys;
-  const home = yield* Effect.promise(() => agentHomeKeyOfRoot(workspaceRoot));
-  return home === undefined ? keys : [home];
+  if (keys.length > 0) return keys;
+  const canFloat = spill || (yield* Effect.promise(() => isAgentExecutorHomeRoot(workspaceRoot)));
+  if (!canFloat) return keys;
+  return yield* Effect.promise(() => agentHomeKeysOfRoot(workspaceRoot));
 });
 
 export const spillSkip = (

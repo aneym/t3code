@@ -8,10 +8,10 @@ import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import * as HostResources from "../../../resourceTelemetry/HostResources.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
-import { AGENT_HOME_KEY_PREFIX } from "../../../agents/AgentHomeOfPath.ts";
+import { isAgentHomeKey } from "../../../agents/AgentHomeOfPath.ts";
 import {
-  projectsAtAgentHome,
   projectsByRepository,
+  projectsMatchingAgentHome,
 } from "../../../project/ProjectsByRepository.ts";
 import * as Gate from "../../../orchestration-v2/DelegatedChildStartGate.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
@@ -98,11 +98,11 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
         placementProjectId = undefined;
         const projects = yield* Effect.serviceOption(ProjectService.ProjectService);
         if (Option.isSome(projects)) {
-          const home = [...wanted].find((key) => key.startsWith(AGENT_HOME_KEY_PREFIX));
+          const isHome = [...wanted].some(isAgentHomeKey);
           const found = yield* (
-            home === undefined
-              ? projectsByRepository(projects.value, wanted)
-              : projectsAtAgentHome(projects.value, home.slice(AGENT_HOME_KEY_PREFIX.length))
+            isHome
+              ? projectsMatchingAgentHome(projects.value, wanted)
+              : projectsByRepository(projects.value, wanted)
           ).pipe(Effect.mapError(unavailable));
           if (found.complete) placementProjectCount = found.matches.length;
           if (found.complete && found.matches.length === 1)
@@ -112,8 +112,9 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
       const hostResources = Option.isSome(resources) ? yield* resources.value.read : null;
       const placementWeight = current.agentLoadBalancingWeights[descriptor.environmentId];
       const gate = yield* Effect.serviceOption(Gate.DelegatedChildStartGate);
+      const placementRoom = Option.isSome(gate) ? yield* gate.value.room : undefined;
       return {
-        ...(Option.isSome(gate) ? { placementRoom: yield* gate.value.room } : {}),
+        ...(placementRoom === undefined ? {} : { placementRoom }),
         ...(placementProjectId === undefined ? {} : { placementProjectId }),
         ...(placementProjectCount === undefined ? {} : { placementProjectCount }),
         ...(placementWeight === undefined ? {} : { placementWeight }),
@@ -125,6 +126,7 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
           weight: current.agentLoadBalancingWeights[descriptor.environmentId] ?? 50,
           line: current.agentPlacementHealthLine,
           now: DateTime.toEpochMillis(yield* DateTime.now),
+          ...(placementRoom === undefined ? {} : { room: placementRoom }),
         }),
         environmentId: descriptor.environmentId,
         label: descriptor.label,
