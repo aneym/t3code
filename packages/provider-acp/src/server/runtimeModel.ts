@@ -647,18 +647,25 @@ function locationsFromToolCallInput(input: {
 const TOOL_CALL_CONTENT_MAX_CHARS = 8_000;
 const TOOL_CALL_CONTENT_TRUNCATION_MARKER = "[Earlier output truncated]\n\n";
 
-function boundToolCallOutputText(text: string): string {
-  if (text.length <= TOOL_CALL_CONTENT_MAX_CHARS) {
+export interface ParseSessionUpdateOptions {
+  readonly toolCallContentMaxChars?: number;
+}
+
+function boundToolCallOutputText(text: string, maxChars = TOOL_CALL_CONTENT_MAX_CHARS): string {
+  if (text.length <= maxChars) {
     return text;
   }
-  const tail = text.slice(text.length - TOOL_CALL_CONTENT_MAX_CHARS);
+  const tail = text.slice(text.length - maxChars);
   return `${TOOL_CALL_CONTENT_TRUNCATION_MARKER}${tail}`;
 }
 
 const RAW_OUTPUT_TEXT_FIELDS = ["content", "stdout", "stderr", "output"] as const;
 
 // rawOutput can duplicate cumulative output and bypass content limits.
-function boundToolCallRawOutput(rawOutput: unknown): unknown {
+function boundToolCallRawOutput(
+  rawOutput: unknown,
+  maxChars = TOOL_CALL_CONTENT_MAX_CHARS,
+): unknown {
   if (!isRecord(rawOutput)) {
     return rawOutput;
   }
@@ -666,8 +673,8 @@ function boundToolCallRawOutput(rawOutput: unknown): unknown {
   const bounded: Record<string, unknown> = { ...rawOutput };
   for (const field of RAW_OUTPUT_TEXT_FIELDS) {
     const value = rawOutput[field];
-    if (typeof value === "string" && value.length > TOOL_CALL_CONTENT_MAX_CHARS) {
-      bounded[field] = boundToolCallOutputText(value);
+    if (typeof value === "string" && value.length > maxChars) {
+      bounded[field] = boundToolCallOutputText(value, maxChars);
       changed = true;
     }
   }
@@ -688,11 +695,12 @@ function toolCallContentText(entry: EffectAcpSchema.ToolCallContent): string | u
 
 function boundToolCallContentEntries(
   content: ReadonlyArray<EffectAcpSchema.ToolCallContent>,
+  maxChars = TOOL_CALL_CONTENT_MAX_CHARS,
 ): ReadonlyArray<EffectAcpSchema.ToolCallContent> {
   let changed = false;
   const bounded = content.map((entry) => {
     const text = toolCallContentText(entry);
-    if (text === undefined || text.length <= TOOL_CALL_CONTENT_MAX_CHARS) {
+    if (text === undefined || text.length <= maxChars) {
       return entry;
     }
     changed = true;
@@ -701,7 +709,7 @@ function boundToolCallContentEntries(
       type: "content",
       content: {
         type: "text",
-        text: boundToolCallOutputText(trimmed.length > 0 ? trimmed : text),
+        text: boundToolCallOutputText(trimmed.length > 0 ? trimmed : text, maxChars),
       },
     } as const;
   });
@@ -710,6 +718,7 @@ function boundToolCallContentEntries(
 
 function extractTextContentFromToolCallContent(
   content: ReadonlyArray<EffectAcpSchema.ToolCallContent> | null | undefined,
+  maxChars = TOOL_CALL_CONTENT_MAX_CHARS,
 ): ExtractedToolCallContent {
   if (!content) {
     return { text: undefined, content: undefined };
@@ -722,14 +731,14 @@ function extractTextContentFromToolCallContent(
     }
   }
   if (chunks.length === 0) {
-    return { text: undefined, content: boundToolCallContentEntries(content) };
+    return { text: undefined, content: boundToolCallContentEntries(content, maxChars) };
   }
   const joined = chunks.join("\n");
-  if (joined.length <= TOOL_CALL_CONTENT_MAX_CHARS) {
-    return { text: joined, content: boundToolCallContentEntries(content) };
+  if (joined.length <= maxChars) {
+    return { text: joined, content: boundToolCallContentEntries(content, maxChars) };
   }
-  const bounded = boundToolCallOutputText(joined);
-  const tail = joined.slice(joined.length - TOOL_CALL_CONTENT_MAX_CHARS);
+  const bounded = boundToolCallOutputText(joined, maxChars);
+  const tail = joined.slice(joined.length - maxChars);
   return {
     text: bounded,
     content: distributeRetainedTailAcrossContent(content, tail),
@@ -825,16 +834,18 @@ function makeToolCallState(
   },
   options?: {
     readonly fallbackStatus?: "pending" | "inProgress" | "completed" | "failed";
+    readonly toolCallContentMaxChars?: number;
   },
 ): AcpToolCallState | undefined {
   const toolCallId = input.toolCallId.trim();
   if (!toolCallId) {
     return undefined;
   }
+  const maxChars = options?.toolCallContentMaxChars ?? TOOL_CALL_CONTENT_MAX_CHARS;
   const title = input.title?.trim() || undefined;
   const kind = normalizeToolKind(input.kind);
   const command = extractToolCallCommand(input.rawInput, title, kind);
-  const extractedContent = extractTextContentFromToolCallContent(input.content);
+  const extractedContent = extractTextContentFromToolCallContent(input.content, maxChars);
   const textContent = extractedContent.text;
   const normalizedTitle =
     title && title.toLowerCase() !== "terminal" && title.toLowerCase() !== "tool call"
@@ -860,7 +871,7 @@ function makeToolCallState(
     data.meta = input._meta;
   }
   if (input.rawOutput !== undefined) {
-    data.rawOutput = boundToolCallRawOutput(input.rawOutput);
+    data.rawOutput = boundToolCallRawOutput(input.rawOutput, maxChars);
   }
   if (input.content != null) {
     data.content = sanitizeAcpToolCallContent(extractedContent.content ?? input.content);
@@ -904,6 +915,7 @@ function parseTypedToolCallState(
   event: AcpToolCallUpdate,
   options?: {
     readonly fallbackStatus?: "pending" | "inProgress" | "completed" | "failed";
+    readonly toolCallContentMaxChars?: number;
   },
 ): AcpToolCallState | undefined {
   return makeToolCallState(
@@ -1347,7 +1359,10 @@ function boundToolCallRawPayload(
   };
 }
 
-export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotification): {
+export function parseSessionUpdateEvent(
+  params: EffectAcpSchema.SessionNotification,
+  options?: ParseSessionUpdateOptions,
+): {
   readonly modeId?: string;
   readonly events: ReadonlyArray<AcpParsedSessionEvent>;
 } {
@@ -1470,6 +1485,9 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
     case "tool_call": {
       const toolCall = parseTypedToolCallState(upd, {
         fallbackStatus: "pending",
+        ...(options?.toolCallContentMaxChars === undefined
+          ? {}
+          : { toolCallContentMaxChars: options.toolCallContentMaxChars }),
       });
       if (toolCall) {
         events.push({
@@ -1481,7 +1499,12 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
       break;
     }
     case "tool_call_update": {
-      const toolCall = parseTypedToolCallState(upd);
+      const toolCall = parseTypedToolCallState(
+        upd,
+        options?.toolCallContentMaxChars === undefined
+          ? undefined
+          : { toolCallContentMaxChars: options.toolCallContentMaxChars },
+      );
       if (toolCall) {
         events.push({
           _tag: "ToolCallUpdated",

@@ -270,6 +270,7 @@ export const CodexProviderCapabilitiesV2 = {
     supportsSteeringByInterruptRestart: true,
     supportsQueuedMessages: true,
     terminalStatusQuality: "strong",
+    goalCommands: "full",
   },
   streaming: {
     streamsAssistantText: true,
@@ -318,6 +319,7 @@ export const CodexProviderCapabilitiesV2 = {
     canConsumeHandoffSummaries: true,
     supportsDeltaHandoff: true,
     supportsFullThreadHandoff: true,
+    supportsCompaction: true,
     maxRecommendedHandoffChars: null,
   },
   checkpointing: {

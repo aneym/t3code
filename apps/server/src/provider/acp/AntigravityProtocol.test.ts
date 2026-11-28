@@ -4,6 +4,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import * as AcpWireSchema from "effect-acp/schema-v1";
 
 import {
+  ANTIGRAVITY_TOOL_TEXT_LIMIT,
   extractAntigravityUserInputQuestion,
   antigravityApprovalOptions,
   antigravitySubagentModel,
@@ -67,9 +68,9 @@ describe("native Antigravity subagent tools", () => {
     ).toBe("Finished review.");
     const result = antigravitySubagentOutput({
       toolCallId: "trajectory:4",
-      data: { rawOutput: `${"x".repeat(16_000)}The result.` },
+      data: { rawOutput: `${"x".repeat(ANTIGRAVITY_TOOL_TEXT_LIMIT + 16_000)}The result.` },
     });
-    expect(result?.length).toBeLessThan(8_100);
+    expect(result?.length).toBeLessThan(ANTIGRAVITY_TOOL_TEXT_LIMIT + 100);
     expect(result?.endsWith("The result.")).toBe(true);
     expect(
       antigravitySubagentOutput({ toolCallId: "trajectory:4", data: { rawOutput: {} } }),
@@ -379,7 +380,7 @@ describe("Antigravity tool results", () => {
   });
 
   it("bounds both canonical output and retained raw output", () => {
-    const output = `${"output line\n".repeat(20_000)}last line\n`;
+    const output = `${"output line\n".repeat(30_000)}last line\n`;
     const event = parseToolUpdate({
       ...commandCompleted,
       update: {
@@ -396,8 +397,10 @@ describe("Antigravity tool results", () => {
       item: { aggregatedOutput: expect.stringContaining("last line\n") },
       rawOutput: { combinedOutput: expect.stringContaining("last line\n") },
     });
-    expect(JSON.stringify(toolCall).length).toBeLessThan(20_000);
-    expect(JSON.stringify(event.rawPayload).length).toBeLessThan(10_000);
+    expect(JSON.stringify(toolCall).length).toBeLessThan(ANTIGRAVITY_TOOL_TEXT_LIMIT * 2 + 65_000);
+    expect(JSON.stringify(event.rawPayload).length).toBeLessThan(
+      ANTIGRAVITY_TOOL_TEXT_LIMIT + 40_000,
+    );
     expect(JSON.stringify(event.rawPayload)).not.toContain("formatted_output");
   });
 
@@ -449,14 +452,14 @@ describe("Antigravity tool results", () => {
   it("bounds nested tool data and drops image blobs and data URLs", () => {
     const payload = sanitizeAntigravityToolPayload({
       rawOutput: {
-        text: "a".repeat(100_000),
+        text: "a".repeat(ANTIGRAVITY_TOOL_TEXT_LIMIT + 100_000),
         result: { mimeType: "image/png", blob: "image-blob".repeat(100_000) },
         image: { type: "image", data: "inline-image".repeat(100_000) },
         uri: "data:image/png;base64,inline-data-url",
       },
     });
     const serialized = JSON.stringify(payload);
-    expect(serialized.length).toBeLessThan(9_000);
+    expect(serialized.length).toBeLessThan(ANTIGRAVITY_TOOL_TEXT_LIMIT + 2_000);
     expect(serialized).not.toContain("image-blob");
     expect(serialized).not.toContain("inline-image");
     expect(serialized).not.toContain("inline-data-url");

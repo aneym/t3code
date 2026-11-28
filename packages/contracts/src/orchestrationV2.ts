@@ -294,6 +294,7 @@ export const OrchestrationV2TurnCapabilities = Schema.Struct({
   supportsSteeringByInterruptRestart: Schema.Boolean,
   supportsQueuedMessages: Schema.Boolean,
   terminalStatusQuality: Schema.Literals(["strong", "weak", "none"]),
+  goalCommands: Schema.optional(Schema.Literals(["full", "without_pause_resume"])),
 });
 export type OrchestrationV2TurnCapabilities = typeof OrchestrationV2TurnCapabilities.Type;
 
@@ -342,6 +343,7 @@ export const OrchestrationV2SubagentCapabilities = Schema.Struct({
   emitsSubagentLifecycle: Schema.Boolean,
   canWaitForSubagents: Schema.Boolean,
   canCloseSubagents: Schema.Boolean,
+  canStopSubagents: Schema.optional(Schema.Boolean),
   canForkSubagentThread: Schema.Boolean,
 });
 export type OrchestrationV2SubagentCapabilities = typeof OrchestrationV2SubagentCapabilities.Type;
@@ -354,6 +356,7 @@ export const OrchestrationV2ContextCapabilities = Schema.Struct({
   canConsumeHandoffSummaries: Schema.Boolean,
   supportsDeltaHandoff: Schema.Boolean,
   supportsFullThreadHandoff: Schema.Boolean,
+  supportsCompaction: Schema.optional(Schema.Boolean),
   maxRecommendedHandoffChars: Schema.NullOr(PositiveInt),
 });
 export type OrchestrationV2ContextCapabilities = typeof OrchestrationV2ContextCapabilities.Type;

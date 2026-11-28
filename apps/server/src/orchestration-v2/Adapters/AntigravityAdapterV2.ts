@@ -2,6 +2,7 @@ import {
   ANTIGRAVITY_DEFAULT_MODEL,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ModelSelection,
   type OrchestrationV2ProviderCapabilities,
   type ProviderSetupError,
 } from "@t3tools/contracts";
@@ -26,6 +27,7 @@ import {
 } from "../../provider/acp/AntigravityAcpSupport.ts";
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
 import {
+  ANTIGRAVITY_TOOL_TEXT_LIMIT,
   antigravityApprovalOptions,
   antigravitySubagentModel,
   antigravitySubagentOutput,
@@ -45,8 +47,49 @@ import {
   type AcpAdapterV2Flavor,
   type AcpAdapterV2RuntimeInput,
 } from "@t3tools/provider-acp/server/adapter";
+import { sessionModelStateFromInitialize } from "@t3tools/provider-acp/server/runtimeModel";
 
 const ANTIGRAVITY_PROVIDER = ProviderDriverKind.make("antigravity");
+const ANTIGRAVITY_GEMINI_DEFAULT_CONTEXT_WINDOW = 1_000_000;
+const ANTIGRAVITY_THINKING_OPTION_IDS = new Set([
+  "thought_level",
+  "thinkingLevel",
+  "reasoningEffort",
+]);
+const ANTIGRAVITY_THINKING_SUFFIX_PATTERN = /-(?:minimal|low|medium|high|max|none|xhigh)$/i;
+
+function normalizeAntigravityBaseModel(model: string): string {
+  return model.trim().replace(ANTIGRAVITY_THINKING_SUFFIX_PATTERN, "");
+}
+
+function normalizeNonThinkingOptions(
+  options: ModelSelection["options"] | Readonly<Record<string, unknown>>,
+): ReadonlyArray<readonly [string, unknown]> {
+  if (options === undefined) return [];
+  if (Array.isArray(options)) {
+    return options
+      .filter((option) => !ANTIGRAVITY_THINKING_OPTION_IDS.has(option.id))
+      .map((option) => [option.id, option.value] as const)
+      .toSorted(([a], [b]) => a.localeCompare(b));
+  }
+  return Object.entries(options)
+    .filter(([key]) => !ANTIGRAVITY_THINKING_OPTION_IDS.has(key))
+    .toSorted(([a], [b]) => a.localeCompare(b));
+}
+
+function canReuseAntigravityContextUsage(previous: ModelSelection, next: ModelSelection): boolean {
+  if (previous.instanceId !== next.instanceId) return false;
+  if (normalizeAntigravityBaseModel(previous.model) !== normalizeAntigravityBaseModel(next.model)) {
+    return false;
+  }
+  const previousEntries = normalizeNonThinkingOptions(previous.options);
+  const nextEntries = normalizeNonThinkingOptions(next.options);
+  if (previousEntries.length !== nextEntries.length) return false;
+  return previousEntries.every(
+    ([key, value], index) =>
+      nextEntries[index]?.[0] === key && Object.is(nextEntries[index]?.[1], value),
+  );
+}
 
 const AntigravityProviderCapabilitiesV2 = {
   ...AcpProviderCapabilitiesV2,
@@ -55,6 +98,10 @@ const AntigravityProviderCapabilitiesV2 = {
     supportsModelSwitchInSession: true,
     supportsRuntimeModeSwitchInSession: true,
   },
+  turns: {
+    ...AcpProviderCapabilitiesV2.turns,
+    goalCommands: "without_pause_resume",
+  },
   tools: {
     ...AcpProviderCapabilitiesV2.tools,
     supportsMcpTools: true,
@@ -62,6 +109,10 @@ const AntigravityProviderCapabilitiesV2 = {
   subagents: {
     ...AcpProviderCapabilitiesV2.subagents,
     supportsSubagents: true,
+  },
+  context: {
+    ...AcpProviderCapabilitiesV2.context,
+    supportsCompaction: true,
   },
 } satisfies OrchestrationV2ProviderCapabilities;
 
@@ -225,6 +276,30 @@ export function makeAntigravityAcpAdapterFlavor(
       ),
     settleSubagentsOnTurnCompletion: true,
     ...(options.onSessionEvent === undefined ? {} : { onSessionEvent: options.onSessionEvent }),
+    getModelContextWindow: (selection, session) => {
+      if (selection.instanceId !== options.instanceId) return undefined;
+      const models =
+        session.sessionSetupResult.models ??
+        sessionModelStateFromInitialize(session.initializeResult);
+      const modelId =
+        selection.model === ANTIGRAVITY_DEFAULT_MODEL ? models?.currentModelId : selection.model;
+      if (!modelId) return undefined;
+      const baseModelId = normalizeAntigravityBaseModel(modelId);
+      const matched = models?.availableModels.find(
+        (model) =>
+          model.modelId === modelId || normalizeAntigravityBaseModel(model.modelId) === baseModelId,
+      );
+      const meta = matched?._meta;
+      const reported = meta?.totalContextTokens ?? meta?.contextWindow;
+      if (typeof reported === "number" && Number.isSafeInteger(reported) && reported > 0) {
+        return reported;
+      }
+      if (modelId.toLowerCase().startsWith("gemini")) {
+        return ANTIGRAVITY_GEMINI_DEFAULT_CONTEXT_WINDOW;
+      }
+      return undefined;
+    },
+    canReuseContextUsage: canReuseAntigravityContextUsage,
     applyModelSelection: Effect.fn("AntigravityAdapterV2.applyModelSelection")(function* ({
       runtime,
       modelSelection,
@@ -258,6 +333,7 @@ export function makeAntigravityAcpAdapterFlavor(
       };
     },
     normalizeToolCall: normalizeAntigravityToolCall,
+    toolCallContentMaxChars: ANTIGRAVITY_TOOL_TEXT_LIMIT,
     extractSubagentUpdate: extractAntigravitySubagentUpdate,
     supportsImagePrompts: true,
     supportsCompaction: true,

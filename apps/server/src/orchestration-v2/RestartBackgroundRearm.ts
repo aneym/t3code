@@ -167,10 +167,12 @@ function shellRearm(
 }
 
 function subagentRearm(work: Work, driver: string): string | undefined {
-  if (driver !== "claudeAgent") return undefined;
-  const agentId = /\((?:id|subagent) ([^)\s]+)\)$/.exec(work.label)?.[1];
+  const agentId = /\((?:id|subagent) ([^)\s]+)\)$/.exec(work.label)?.[1] ?? work.id;
   if (agentId === undefined) return undefined;
-  return `Resume it: SendMessage to "${agentId}" to finish and report back; if it is not found, relaunch it with its original prompt.`;
+  if (driver === "claudeAgent") {
+    return `Resume it: SendMessage to "${agentId}" to finish and report back; if it is not found, relaunch it with its original prompt.`;
+  }
+  return `Resume or relaunch subagent "${agentId}" with its original prompt to finish and report back.`;
 }
 
 const rearm = Effect.fnUntraced(function* (

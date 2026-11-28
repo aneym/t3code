@@ -818,8 +818,8 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
-      // Codex and Claude parse /goal from the prompt, so it goes verbatim and history waits a turn.
-      const goalDriver = session.driver === "codex" || session.driver === "claudeAgent";
+      // Providers declaring goalCommands parse /goal verbatim and defer history by one turn.
+      const goalDriver = session.providerSession?.capabilities.turns.goalCommands !== undefined;
       const goalCommand = goalDriver && parseGoalCommand(message) !== null;
       // The provider turn marks cancellation work delivered; restart continuations use their own text or resume natively.
       const unacceptedChain = unacceptedContinuationChain(projection, run);
@@ -1140,17 +1140,15 @@ export const layer: Layer.Layer<
         const previousRunId = projection.runs.findLast(
           (candidate) => candidate.ordinal < run.ordinal,
         )?.id;
-        const rejectedClaudeResume =
-          session.driver === "claudeAgent" &&
-          projection.turnItems.some(
-            (item) =>
-              item.providerThreadId === providerThread.id &&
-              (item.runId === previousRunId || item.runId === run.id) &&
-              item.type === "error" &&
-              /No conversation found/i.test(item.failure.message),
-          );
+        const rejectedMissingSessionResume = projection.turnItems.some(
+          (item) =>
+            item.providerThreadId === providerThread.id &&
+            (item.runId === previousRunId || item.runId === run.id) &&
+            item.type === "error" &&
+            /No conversation found|session not found/i.test(item.failure.message),
+        );
         const uncertainDelivery =
-          rejectedClaudeResume ||
+          rejectedMissingSessionResume ||
           projection.contextHandoffs.some(
             (handoff) =>
               handoff.toProviderThreadId === providerThread.id &&

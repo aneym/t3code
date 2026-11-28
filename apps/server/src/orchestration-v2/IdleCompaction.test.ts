@@ -138,11 +138,7 @@ describe("idleCompactionWindow", () => {
     const cache = { cacheExpiresInMs: 60 * MINUTE_MS };
     expect(idleCompactionWindow(records({ ...cache, usedTokens: 199_999 }), NOW_MS)).toBeNull();
     expect(idleCompactionWindow(records(), NOW_MS)).toBeNull();
-    const codex = records(cache);
-    codex.providerThreads = [
-      { ...codex.providerThreads[0]!, driver: ProviderDriverKind.make("codex") },
-    ];
-    expect(idleCompactionWindow(codex, NOW_MS)).toBeNull();
+    expect(idleCompactionWindow(records(cache), NOW_MS, { supportsCompaction: false })).toBeNull();
     const switched = records(cache);
     switched.thread = { ...switched.thread, providerInstanceId: ProviderInstanceId.make("codex") };
     expect(idleCompactionWindow(switched, NOW_MS)).toBeNull();

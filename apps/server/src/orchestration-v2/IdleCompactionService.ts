@@ -18,6 +18,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { idleCompactionWindow } from "./IdleCompaction.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 
 /**
  * Beta: when a run completes on a Claude instance set to compact before the
@@ -28,6 +29,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 export const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const adapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
   const settings = yield* ServerSettings.ServerSettingsService;
 
   const compactWhenDue = Effect.fn("IdleCompactionService.compactWhenDue")(
@@ -58,8 +60,13 @@ export const make = Effect.gen(function* () {
           )
         )
           return;
+        const supportsCompaction = yield* adapters.get(records.thread.providerInstanceId).pipe(
+          Effect.flatMap((adapter) => adapter.getCapabilities()),
+          Effect.map((capabilities) => capabilities.context.supportsCompaction === true),
+          Effect.orElseSucceed(() => false),
+        );
         const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-        const window = idleCompactionWindow(records, nowMs);
+        const window = idleCompactionWindow(records, nowMs, { supportsCompaction });
         if (window?.runId !== runId) return;
         if (nowMs < window.startMs) {
           yield* Effect.sleep(Duration.millis(window.startMs - nowMs));

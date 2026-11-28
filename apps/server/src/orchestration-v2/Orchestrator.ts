@@ -865,17 +865,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
 
-  const goalDriverFor = Effect.fn("Orchestrator.goalDriverFor")(function* (
+  const goalCommandsFor = Effect.fn("Orchestrator.goalCommandsFor")(function* (
     command: OrchestrationV2ServerCommand,
     providerInstanceId: ProviderInstanceId,
   ) {
-    const { driver } = yield* providerAdapters
-      .get(providerInstanceId)
-      .pipe(mapDispatchError(command));
-    return driver === "codex" || driver === "claudeAgent" ? driver : undefined;
+    const adapter = yield* providerAdapters.get(providerInstanceId).pipe(mapDispatchError(command));
+    const capabilities = yield* adapter.getCapabilities().pipe(mapDispatchError(command));
+    return capabilities.turns.goalCommands;
   });
 
-  /** Claude Code reads `/goal pause` and `/goal resume` as new goals named "pause" and "resume". */
+  /** Providers without pause/resume read `/goal pause` and `/goal resume` as new goals. */
   const ensureGoalCommandSupported = Effect.fn("Orchestrator.ensureGoalCommandSupported")(
     function* (
       command: OrchestrationV2ServerCommand,
@@ -884,11 +883,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ) {
       const goalCommand = parseGoalCommand(message);
       if (goalCommand?.type !== "pause" && goalCommand?.type !== "resume") return;
-      if ((yield* goalDriverFor(command, providerInstanceId)) !== "claudeAgent") return;
+      if ((yield* goalCommandsFor(command, providerInstanceId)) !== "without_pause_resume") return;
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: "Claude goals cannot be paused or resumed. Send /goal clear to remove the goal.",
+        cause:
+          "Goals cannot be paused or resumed on this provider. Send /goal clear to remove the goal.",
       });
     },
   );
@@ -5444,11 +5444,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ) {
       dispatchMode = { type: "queue_after_active" };
     }
-    // Codex and Claude own /goal; elsewhere it is ordinary text that cannot steer.
+    // Providers with goalCommands own /goal; elsewhere it is ordinary text that cannot steer.
     const parsedGoalCommand = parseGoalCommand(command);
     const goalCommand =
       parsedGoalCommand === null ||
-      (yield* goalDriverFor(command, modelSelection.instanceId)) === undefined
+      (yield* goalCommandsFor(command, modelSelection.instanceId)) === undefined
         ? null
         : parsedGoalCommand;
     let goalStopRunId: RunId | undefined;
@@ -9206,7 +9206,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const parsedGoalCommand = parseGoalCommand(queuedMessage);
     const goalCommand =
       parsedGoalCommand === null ||
-      (yield* goalDriverFor(command, queuedRun.providerInstanceId)) === undefined
+      (yield* goalCommandsFor(command, queuedRun.providerInstanceId)) === undefined
         ? null
         : parsedGoalCommand;
     const target = projection.runs.find((run) => run.id === command.targetRunId);
@@ -10766,11 +10766,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         now,
       });
     }
+    const canStopNativeSubagent =
+      subagent !== undefined && subagent.origin === "provider_native"
+        ? yield* providerAdapters.get(subagent.providerInstanceId).pipe(
+            Effect.flatMap((adapter) => adapter.getCapabilities()),
+            Effect.map((capabilities) => capabilities.subagents.canStopSubagents === true),
+            Effect.orElseSucceed(() => false),
+          )
+        : false;
     if (
       subagent === undefined ||
       subagent.runId !== command.runId ||
       subagent.origin !== "provider_native" ||
-      subagent.driver !== "claudeAgent" ||
+      !canStopNativeSubagent ||
       subagent.nativeTaskRef?.strength !== "strong" ||
       subagent.nativeTaskRef.nativeId === null
     ) {

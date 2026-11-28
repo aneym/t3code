@@ -12,8 +12,10 @@ import * as AcpWireSchema from "effect-acp/schema-v1";
 
 import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 
-const TOOL_TEXT_LIMIT = 8_000;
+export const ANTIGRAVITY_TOOL_TEXT_LIMIT = 256_000;
 const TOOL_TEXT_TRUNCATED = "[Earlier output truncated]\n\n";
+const QUESTION_TEXT_LIMIT = 8_000;
+const IMAGE_PATH_LIMIT = 8_000;
 const QUESTION_LABEL_LIMIT = 512;
 
 const NativeToolFields = Schema.Struct({
@@ -123,8 +125,8 @@ export function extractAntigravityUserInputQuestion(
     id: request.toolCall.toolCallId,
     header: "Question",
     question:
-      question.length > TOOL_TEXT_LIMIT
-        ? copyBoundedText(`${question.slice(0, TOOL_TEXT_LIMIT - 3)}...`)
+      question.length > QUESTION_TEXT_LIMIT
+        ? copyBoundedText(`${question.slice(0, QUESTION_TEXT_LIMIT - 3)}...`)
         : question,
     multiSelect: false,
     allowCustomAnswer: false,
@@ -157,7 +159,7 @@ export function makeAntigravityUserInputResponse(
   return option ? { outcome: { outcome: "selected", optionId: option.optionId } } : undefined;
 }
 
-function boundText(text: string, limit = TOOL_TEXT_LIMIT): string {
+function boundText(text: string, limit = ANTIGRAVITY_TOOL_TEXT_LIMIT): string {
   return text.length <= limit
     ? text
     : copyBoundedText(`${TOOL_TEXT_TRUNCATED}${text.slice(-limit)}`);
@@ -176,7 +178,7 @@ function sanitizeToolValue(value: unknown, budget: ToolPayloadBudget, depth: num
     if (/^data:image\//i.test(value) || budget.text <= 0) {
       return undefined;
     }
-    const text = boundText(value, Math.min(TOOL_TEXT_LIMIT, budget.text));
+    const text = boundText(value, Math.min(ANTIGRAVITY_TOOL_TEXT_LIMIT, budget.text));
     budget.text -= text.length;
     return text;
   }
@@ -212,7 +214,7 @@ function sanitizeToolValue(value: unknown, budget: ToolPayloadBudget, depth: num
 }
 
 export function sanitizeAntigravityToolPayload(payload: unknown): unknown {
-  return sanitizeToolValue(payload, { nodes: 512, text: 64_000 }, 0);
+  return sanitizeToolValue(payload, { nodes: 2_048, text: 512_000 }, 0);
 }
 const isJsonRecord = Schema.is(Schema.Record(Schema.String, Schema.Json));
 
@@ -304,7 +306,7 @@ export function normalizeAntigravitySessionUpdate(
   if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") {
     return notification;
   }
-  const contentBudget = { nodes: 512, text: 32_000 };
+  const contentBudget = { nodes: 2_048, text: 512_000 };
   const content = update.content?.flatMap((entry) => {
     const decoded = Option.getOrUndefined(
       decodeToolCallContent(sanitizeToolValue(entry, contentBudget, 0)),
@@ -330,7 +332,7 @@ export function normalizeAntigravitySessionUpdate(
 }
 
 function localImagePath(imagePath: string | undefined): string | undefined {
-  if (!imagePath || imagePath.length > TOOL_TEXT_LIMIT) {
+  if (!imagePath || imagePath.length > IMAGE_PATH_LIMIT) {
     return undefined;
   }
   const path = imagePath.trim();
@@ -523,9 +525,22 @@ export function antigravitySubagentOutput(toolCall: AcpToolCallState): string | 
     "Text",
     "error",
     "Error",
+    "stderr",
+    "Stderr",
     "combinedOutput",
     "combined_output",
   ]);
   if (objectOutput !== undefined) return objectOutput;
+  if (Predicate.isObject(output)) {
+    const nestedError = firstNonEmptyStringField(output.error ?? output.Error, [
+      "message",
+      "Message",
+      "detail",
+      "Detail",
+      "error",
+      "Error",
+    ]);
+    if (nestedError !== undefined) return nestedError;
+  }
   return antigravitySubagentContentText(toolCall.data.content);
 }

@@ -41,11 +41,13 @@ export function idleCompactionWindow(
     contextTransfers,
   }: IdleCompactionRecords,
   nowMs: number,
+  options?: { readonly supportsCompaction?: boolean },
 ): {
   readonly runId: (typeof runs)[number]["id"];
   readonly startMs: number;
   readonly endMs: number;
 } | null {
+  if (options?.supportsCompaction === false) return null;
   if (thread.deletedAt !== null || thread.archivedAt !== null) return null;
   if (thread.settledAt !== null || thread.settledOverride === "settled") return null;
   if (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs)
@@ -81,9 +83,9 @@ export function idleCompactionWindow(
   const providerThread = providerThreads.find(
     (candidate) => candidate.id === thread.activeProviderThreadId,
   );
-  // The thread's current selection receives the /compact, so it must still be this Claude session.
+  // The thread's current selection receives the /compact, so it must still match this session.
   if (
-    providerThread?.driver !== "claudeAgent" ||
+    providerThread === undefined ||
     providerThread.id !== latestRun.providerThreadId ||
     providerThread.providerInstanceId !== thread.providerInstanceId ||
     latestRun.providerInstanceId !== thread.providerInstanceId

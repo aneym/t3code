@@ -362,6 +362,7 @@ export const ClaudeProviderCapabilitiesV2 = {
     supportsSteeringByInterruptRestart: false,
     supportsQueuedMessages: true,
     terminalStatusQuality: "strong",
+    goalCommands: "without_pause_resume",
   },
   streaming: {
     streamsAssistantText: true,
@@ -400,6 +401,7 @@ export const ClaudeProviderCapabilitiesV2 = {
     emitsSubagentLifecycle: true,
     canWaitForSubagents: false,
     canCloseSubagents: false,
+    canStopSubagents: true,
     canForkSubagentThread: false,
   },
   context: {
@@ -410,6 +412,7 @@ export const ClaudeProviderCapabilitiesV2 = {
     canConsumeHandoffSummaries: true,
     supportsDeltaHandoff: true,
     supportsFullThreadHandoff: true,
+    supportsCompaction: true,
     maxRecommendedHandoffChars: null,
   },
   checkpointing: {
