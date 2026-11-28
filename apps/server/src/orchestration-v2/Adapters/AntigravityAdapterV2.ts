@@ -35,6 +35,7 @@ import {
   normalizeAntigravityToolCall,
 } from "../../provider/acp/AntigravityProtocol.ts";
 import { isAntigravitySignInRequiredError } from "../../provider/antigravityAuthSupport.ts";
+import { resolveAntigravityAgentsKernel } from "../../provider/Drivers/AntigravitySkills.ts";
 import {
   AcpProviderCapabilitiesV2,
   makeAcpAdapterV2,
@@ -80,6 +81,8 @@ export interface AntigravityAdapterV2Options {
   readonly onSessionEvent?: AcpAdapterV2Flavor["onSessionEvent"];
   readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
+  readonly userHome?: string;
+  readonly environment?: NodeJS.ProcessEnv;
 }
 
 /** Native subagent tools report no child session ids. */
@@ -190,6 +193,19 @@ export function makeAntigravityAcpAdapterFlavor(
     runtimeHarness: "Antigravity",
     capabilities: AntigravityProviderCapabilitiesV2,
     makeRuntime,
+    ...(options.userHome === undefined
+      ? {}
+      : {
+          resolveAgentsKernel: ({ cwd }) =>
+            resolveAntigravityAgentsKernel({
+              cwd,
+              userHome: options.userHome!,
+              ...(options.environment === undefined ? {} : { environment: options.environment }),
+            }).pipe(
+              Effect.provideService(FileSystem.FileSystem, options.fileSystem),
+              Effect.provideService(Path.Path, options.path),
+            ),
+        }),
     buildPrompt: ({ text, attachments, promptCapabilities }) =>
       buildAntigravityPrompt({
         input: text,

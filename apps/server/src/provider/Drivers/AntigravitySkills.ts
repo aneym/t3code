@@ -1,4 +1,6 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { boundAgentsKernel } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -23,7 +25,15 @@ export function resolveAntigravityUserHome(
   return environment.HOME || home;
 }
 
-/** Link private GEMINI_HOME skills to ~/.gemini; ~/.agents/skills is ignored because .agents/skills is project-only. */
+export function resolveRailsSkillsDir(
+  path: Path.Path,
+  environment: NodeJS.ProcessEnv,
+  userHome: string,
+): string | undefined {
+  const configured = environment.RAILS_SKILLS_DIR?.trim();
+  return configured ? path.resolve(expandHomePath(configured, userHome)) : undefined;
+}
+
 export function antigravityUserSkillDirectories(
   path: Path.Path,
   geminiHome: string,
@@ -141,6 +151,7 @@ const readSkill = Effect.fn("readAntigravitySkill")(function* (
 export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(function* (input: {
   readonly cwd: string;
   readonly userHome: string;
+  readonly environment?: NodeJS.ProcessEnv;
 }): Effect.fn.Return<
   ReadonlyArray<ServerProviderSkill>,
   AntigravitySkillsProbeError,
@@ -148,11 +159,24 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
 > {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const environment = input.environment ?? process.env;
+  const railsSkillsDir = resolveRailsSkillsDir(path, environment, input.userHome);
+  const readableRailsSkillsDir =
+    railsSkillsDir === undefined
+      ? undefined
+      : (yield* fileSystem.stat(railsSkillsDir).pipe(Effect.orElseSucceed(() => undefined)))
+            ?.type === "Directory"
+        ? railsSkillsDir
+        : undefined;
   const [configSkills, cliSkills] = antigravityUserSkillDirectories(
     path,
     path.join(input.userHome, ".gemini"),
   );
   const roots = [
+    ...(readableRailsSkillsDir === undefined
+      ? []
+      : [{ directory: readableRailsSkillsDir, scope: "user" }]),
+    { directory: path.join(input.userHome, ".agents", "skills"), scope: "user" },
     { directory: configSkills, scope: "user" },
     { directory: path.resolve(input.cwd, ".gemini", "skills"), scope: "project" },
     { directory: cliSkills, scope: "user" },
@@ -164,6 +188,8 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     remainingEntries: MAX_SCAN_ENTRIES,
   };
   const skillsByName = new Map<string, ServerProviderSkill>();
+  const seenRealRootPaths = new Set<string>();
+  const seenRealSkillPaths = new Set<string>();
 
   const scanDirectory = Effect.fn("scanAntigravitySkillDirectory")(function* (
     directory: string,
@@ -172,6 +198,15 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
   ): Effect.fn.Return<void, AntigravitySkillsProbeError, FileSystem.FileSystem> {
     const info = yield* readIfPresent(fileSystem.stat(directory), directory);
     if (info?.type !== "Directory") return;
+    if (scanChildren) {
+      const realRoot = yield* fileSystem
+        .realPath(directory)
+        .pipe(Effect.orElseSucceed(() => undefined));
+      if (realRoot !== undefined) {
+        if (seenRealRootPaths.has(realRoot)) return;
+        seenRealRootPaths.add(realRoot);
+      }
+    }
     const entries = yield* readIfPresent(fileSystem.readDirectory(directory), directory);
     if (entries === undefined) return;
     if (entries.length > budget.remainingEntries) {
@@ -187,10 +222,15 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     if (skillFileName !== undefined) {
       if (!skillFileName.endsWith(".md")) return;
       const skillPath = path.join(directory, skillFileName);
+      const realSkillPath = yield* fileSystem
+        .realPath(skillPath)
+        .pipe(Effect.orElseSucceed(() => undefined));
+      if (realSkillPath !== undefined && seenRealSkillPaths.has(realSkillPath)) return;
       const contents = yield* readSkill(skillPath, budget);
       if (contents === undefined) return;
       const skill = parseSkillFrontmatter(contents, skillFileName);
       if (!skill || skillsByName.has(skill.name)) return;
+      if (realSkillPath !== undefined) seenRealSkillPaths.add(realSkillPath);
       skillsByName.set(skill.name, {
         ...skill,
         path: skillPath,
@@ -216,3 +256,44 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
   }
   return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
 });
+
+export const resolveAntigravityAgentsKernel = Effect.fn("resolveAntigravityAgentsKernel")(
+  function* (input: {
+    readonly cwd: string | null;
+    readonly userHome: string;
+    readonly environment?: NodeJS.ProcessEnv;
+  }): Effect.fn.Return<string | undefined, never, FileSystem.FileSystem | Path.Path> {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const environment = input.environment ?? process.env;
+    const configuredKernel = environment.RAILS_AGENTS_KERNEL?.trim();
+    const candidates = [
+      ...(configuredKernel ? [path.resolve(expandHomePath(configuredKernel, input.userHome))] : []),
+      path.join(input.userHome, ".agents", "AGENTS.md"),
+      path.join(input.userHome, ".gemini", "AGENTS.md"),
+    ];
+    const workspaceLoadedRealPaths = new Set<string>();
+    if (input.cwd !== null) {
+      for (const fileName of ["AGENTS.md", "GEMINI.md"]) {
+        const realWorkspaceFile = yield* fileSystem
+          .realPath(path.resolve(input.cwd, fileName))
+          .pipe(Effect.orElseSucceed(() => undefined));
+        if (realWorkspaceFile !== undefined) workspaceLoadedRealPaths.add(realWorkspaceFile);
+      }
+    }
+    for (const candidate of candidates) {
+      const realCandidate = yield* fileSystem
+        .realPath(candidate)
+        .pipe(Effect.orElseSucceed(() => undefined));
+      if (realCandidate === undefined) continue;
+      if (workspaceLoadedRealPaths.has(realCandidate)) return undefined;
+      const contents = yield* fileSystem
+        .readFileString(realCandidate)
+        .pipe(Effect.orElseSucceed(() => undefined));
+      if (contents === undefined) continue;
+      const bounded = boundAgentsKernel(contents);
+      if (bounded !== undefined) return bounded;
+    }
+    return undefined;
+  },
+);

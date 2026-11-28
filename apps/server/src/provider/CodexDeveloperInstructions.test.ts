@@ -1,11 +1,18 @@
 import * as NodeAssert from "node:assert/strict";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { it as effectIt } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
 import { T3_CODE_DEVICE_TOOL_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
+import { MAX_AGENTS_KERNEL_BYTES } from "@t3tools/provider-core/server/runtimeInstructions";
 import { describe, it } from "vite-plus/test";
 
 import {
   buildCodexAdditionalContext,
   CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES,
+  resolveCodexAgentsKernel,
 } from "./CodexDeveloperInstructions.ts";
 
 describe("buildCodexAdditionalContext", () => {
@@ -92,3 +99,62 @@ describe("Codex device context", () => {
 function runtimeInstructions(runtime: Parameters<typeof buildCodexAdditionalContext>[0]) {
   return buildCodexAdditionalContext(runtime).t3_code_runtime!.value;
 }
+
+describe("Codex agents kernel context", () => {
+  it("emits a bounded t3_code_agents_kernel entry within Codex's per-entry cap", () => {
+    const context = buildCodexAdditionalContext({
+      model: "gpt-6.1-sol",
+      agentsKernel: "k".repeat(MAX_AGENTS_KERNEL_BYTES * 2),
+    });
+    const entry = context.t3_code_agents_kernel;
+    NodeAssert.ok(entry !== undefined);
+    NodeAssert.ok(entry.value.startsWith("<agents_kernel>\n"));
+    NodeAssert.ok(entry.value.endsWith("\n</agents_kernel>"));
+    NodeAssert.ok(
+      Buffer.byteLength(entry.value, "utf8") <= CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES,
+    );
+  });
+});
+
+effectIt.layer(NodeServices.layer)("resolveCodexAgentsKernel", (it) => {
+  it.effect(
+    "falls back to ~/.agents/AGENTS.md when ~/.codex/AGENTS.md is absent and honors RAILS_AGENTS_KERNEL",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-kernel-" });
+        const userHome = path.join(tempDir, "home");
+        const cwd = path.join(tempDir, "workspace");
+        const agentsMd = path.join(userHome, ".agents", "AGENTS.md");
+        const codexMd = path.join(userHome, ".codex", "AGENTS.md");
+        const overrideMd = path.join(tempDir, "override-AGENTS.md");
+
+        yield* fs.makeDirectory(path.dirname(agentsMd), { recursive: true });
+        yield* fs.makeDirectory(cwd, { recursive: true });
+        yield* fs.writeFileString(agentsMd, "canonical-agents-kernel");
+
+        NodeAssert.equal(
+          yield* resolveCodexAgentsKernel({ cwd, userHome, environment: {} }),
+          "canonical-agents-kernel",
+        );
+
+        yield* fs.makeDirectory(path.dirname(codexMd), { recursive: true });
+        yield* fs.writeFileString(codexMd, "codex-native-kernel");
+        NodeAssert.equal(
+          yield* resolveCodexAgentsKernel({ cwd, userHome, environment: {} }),
+          undefined,
+        );
+
+        yield* fs.writeFileString(overrideMd, "override-kernel");
+        NodeAssert.equal(
+          yield* resolveCodexAgentsKernel({
+            cwd,
+            userHome,
+            environment: { RAILS_AGENTS_KERNEL: overrideMd },
+          }),
+          "override-kernel",
+        );
+      }),
+  );
+});

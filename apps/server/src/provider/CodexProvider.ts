@@ -51,6 +51,8 @@ import {
   type CodexResetCreditsSummary,
 } from "./codexUsageLimits.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { parse as parseYamlDocument } from "yaml";
+import { resolveRailsSkillsDir } from "./Drivers/AntigravitySkills.ts";
 import packageJson from "../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
 const RATE_LIMITS_PROBE_TIMEOUT_MS = 3_000;
@@ -350,6 +352,110 @@ function parseCodexSkillsListResponse(
   });
 }
 
+function parseCodexFilesystemSkillFrontmatter(contents: string, directoryName: string) {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(contents);
+  let name = directoryName;
+  let description: string | undefined;
+  if (match) {
+    try {
+      const parsed = parseYamlDocument(match[1] ?? "");
+      if (typeof parsed === "object" && parsed !== null) {
+        const record = parsed as Record<string, unknown>;
+        if (typeof record.name === "string" && record.name.trim()) {
+          name = record.name.trim();
+        }
+        if (typeof record.description === "string" && record.description.trim()) {
+          description = record.description.trim();
+        }
+      }
+    } catch {
+      return undefined;
+    }
+  }
+  return { name, ...(description ? { description } : {}) };
+}
+
+const scanCodexUserSkillRoot = Effect.fn("scanCodexUserSkillRoot")(function* (
+  directory: string,
+): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const info = yield* fileSystem.stat(directory).pipe(Effect.orElseSucceed(() => undefined));
+  if (info?.type !== "Directory") return [];
+  const entries = yield* fileSystem
+    .readDirectory(directory)
+    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+  const skills: Array<ServerProviderSkill> = [];
+  for (const entry of [...entries].sort()) {
+    const childDir = path.join(directory, entry);
+    const childInfo = yield* fileSystem.stat(childDir).pipe(Effect.orElseSucceed(() => undefined));
+    if (childInfo?.type !== "Directory") continue;
+    const childEntries = yield* fileSystem
+      .readDirectory(childDir)
+      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    const skillFile = [...childEntries]
+      .sort()
+      .find((file) => file.toLowerCase() === "skill.md" && file.endsWith(".md"));
+    if (!skillFile) continue;
+    const skillPath = path.join(childDir, skillFile);
+    const contents = yield* fileSystem
+      .readFileString(skillPath)
+      .pipe(Effect.orElseSucceed(() => undefined));
+    if (contents === undefined) continue;
+    const parsed = parseCodexFilesystemSkillFrontmatter(contents, entry);
+    if (!parsed) continue;
+    skills.push({
+      name: parsed.name,
+      path: skillPath,
+      enabled: true,
+      scope: "user",
+      ...(parsed.description ? { description: parsed.description } : {}),
+    });
+  }
+  return skills;
+});
+
+/** Merge RAILS_SKILLS_DIR override and ~/.agents/skills with Codex app-server skills, deduplicating symlinks. */
+export const augmentCodexSkills = Effect.fn("augmentCodexSkills")(function* (input: {
+  readonly appServerSkills: ReadonlyArray<ServerProviderSkill>;
+  readonly homePath?: string | undefined;
+  readonly environment?: NodeJS.ProcessEnv | undefined;
+}): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const hostHome = yield* HostProcess.HomeDirectory;
+  const resolvedEnvironment = input.environment ?? process.env;
+  const explicitEnvHome = input.environment?.HOME?.trim();
+  const userHome =
+    explicitEnvHome ||
+    (input.homePath?.trim()
+      ? path.dirname(path.resolve(expandHomePath(input.homePath.trim(), hostHome)))
+      : resolvedEnvironment.HOME?.trim() || hostHome);
+
+  const railsSkillsDir = resolveRailsSkillsDir(path, resolvedEnvironment, userHome);
+  const railsSkills =
+    railsSkillsDir === undefined ? [] : yield* scanCodexUserSkillRoot(railsSkillsDir);
+  const agentsSkills = yield* scanCodexUserSkillRoot(path.join(userHome, ".agents", "skills"));
+
+  const merged: Array<ServerProviderSkill> = [];
+  const seenNames = new Set<string>();
+  const seenRealPaths = new Set<string>();
+
+  for (const source of [railsSkills, input.appServerSkills, agentsSkills]) {
+    for (const skill of source) {
+      if (seenNames.has(skill.name)) continue;
+      const realSkillPath = yield* fileSystem
+        .realPath(skill.path)
+        .pipe(Effect.orElseSucceed(() => undefined));
+      if (realSkillPath !== undefined && seenRealPaths.has(realSkillPath)) continue;
+      seenNames.add(skill.name);
+      if (realSkillPath !== undefined) seenRealPaths.add(realSkillPath);
+      merged.push(skill);
+    }
+  }
+  return merged;
+});
+
 const requestAllCodexModels = Effect.fn("requestAllCodexModels")(function* (
   client: CodexClient.CodexAppServerClient["Service"],
 ) {
@@ -584,13 +690,22 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     { concurrency: "unbounded" },
   );
 
+  const appServerSkills = skillsResponse
+    ? parseCodexSkillsListResponse(skillsResponse, input.cwd)
+    : [];
+  const skills = yield* augmentCodexSkills({
+    appServerSkills,
+    homePath: input.homePath,
+    environment: input.environment,
+  });
+
   return {
     account: accountResponse,
     ...(rateLimits ? { rateLimits } : {}),
     version,
     models,
     serviceTier,
-    skills: skillsResponse ? parseCodexSkillsListResponse(skillsResponse, input.cwd) : [],
+    skills,
   } satisfies CodexAppServerProviderSnapshot;
 });
 
@@ -603,7 +718,11 @@ export const probeCodexSkillsForCwd = Effect.fn("probeCodexSkillsForCwd")(functi
 }) {
   const { client } = yield* withCodexAppServerClient(input);
   const skillsResponse = yield* client.request("skills/list", { cwds: [input.cwd] });
-  return parseCodexSkillsListResponse(skillsResponse, input.cwd);
+  return yield* augmentCodexSkills({
+    appServerSkills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
+    homePath: input.homePath,
+    environment: input.environment,
+  });
 });
 
 const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvider["models"] =>

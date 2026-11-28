@@ -233,6 +233,9 @@ export interface AcpAdapterV2Flavor {
     text: string,
     turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
   ) => Effect.Effect<string, never, ChildProcessSpawner.ChildProcessSpawner>;
+  readonly resolveAgentsKernel?: (input: {
+    readonly cwd: string | null;
+  }) => Effect.Effect<string | undefined>;
   readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly clientCapabilitiesMeta?: NonNullable<
@@ -7281,11 +7284,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             });
           }
           if (!isNativeSlashCommand) {
+            const agentsKernel =
+              (previousInstructionState === undefined || compactionMarker !== undefined) &&
+              flavor.resolveAgentsKernel !== undefined
+                ? yield* flavor.resolveAgentsKernel({ cwd: turnInput.runtimePolicy.cwd })
+                : undefined;
             prompt.push({
               type: "text",
               text: buildRuntimeInstructions({
                 harness: flavor.runtimeHarness ?? driver,
                 model: turnInput.modelSelection.model,
+                ...(agentsKernel ? { agentsKernel } : {}),
               }),
             });
           }

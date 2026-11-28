@@ -610,6 +610,66 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
       }),
   );
 
+  it.effect.skipIf(!symlinksSupported)(
+    "mounts real canonical skill directories from RAILS_SKILLS_DIR and ~/.agents/skills with zero stubs",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const temporaryDirectory = yield* fs.makeTempDirectoryScoped();
+        const userHome = path.join(temporaryDirectory, "home");
+        const agentsSkills = path.join(userHome, ".agents", "skills");
+        const cliSkills = path.join(userHome, ".gemini", "antigravity-cli", "skills");
+        const railsSkills = path.join(temporaryDirectory, "rails-skills");
+
+        yield* fs.makeDirectory(path.join(agentsSkills, "alpha"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(agentsSkills, "alpha", "SKILL.md"),
+          "---\nname: alpha\ndescription: Real alpha skill.\n---\n",
+        );
+        yield* fs.makeDirectory(path.join(cliSkills, "gamma"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(cliSkills, "gamma", "SKILL.md"),
+          "---\nname: gamma\ndescription: Real gamma skill.\n---\n",
+        );
+        yield* fs.symlink(path.join(agentsSkills, "alpha"), path.join(cliSkills, "alpha-dup"));
+        yield* fs.makeDirectory(path.join(railsSkills, "override"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(railsSkills, "override", "SKILL.md"),
+          "---\nname: override\ndescription: Real override skill.\n---\n",
+        );
+
+        // Merged real directory symlinks when both ~/.agents/skills and ~/.gemini/antigravity-cli/skills exist.
+        const mergedProfile = path.join(temporaryDirectory, "profile-merged");
+        yield* prepareAntigravityProfile({
+          profileDirectory: mergedProfile,
+          userHome,
+          baseEnv: { ...process.env, RAILS_SKILLS_DIR: undefined },
+        });
+        const mergedCliLink = path.join(mergedProfile, "antigravity-cli", "skills");
+        const mergedEntries = (yield* fs.readDirectory(mergedCliLink)).toSorted();
+        expect(mergedEntries).toEqual(["alpha", "gamma"]);
+        const alphaContent = yield* fs.readFileString(
+          path.join(mergedCliLink, "alpha", "SKILL.md"),
+        );
+        expect(alphaContent).not.toContain("disable-model-invocation");
+        expect(yield* fs.readLink(path.join(mergedCliLink, "alpha"))).toBe(
+          yield* fs.realPath(path.join(agentsSkills, "alpha")),
+        );
+
+        // RAILS_SKILLS_DIR takes highest priority as direct real-directory symlink.
+        const railsProfile = path.join(temporaryDirectory, "profile-rails");
+        yield* prepareAntigravityProfile({
+          profileDirectory: railsProfile,
+          userHome,
+          baseEnv: { ...process.env, RAILS_SKILLS_DIR: railsSkills },
+        });
+        const railsCliLink = path.join(railsProfile, "antigravity-cli", "skills");
+        expect(yield* fs.readLink(railsCliLink)).toBe(railsSkills);
+        expect(yield* fs.exists(path.join(railsCliLink, "override", "SKILL.md"))).toBe(true);
+      }),
+  );
+
   it.effect("rewrites the GCP block on every launch and never stores the API key", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

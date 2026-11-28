@@ -1,6 +1,10 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import { buildRuntimeInstructions } from "./runtimeInstructions.ts";
+import {
+  boundAgentsKernel,
+  buildRuntimeInstructions,
+  MAX_AGENTS_KERNEL_BYTES,
+} from "./runtimeInstructions.ts";
 
 describe("buildRuntimeInstructions", () => {
   it("links PRs the agent creates, takes over, or pushes to, and no others", () => {
@@ -37,5 +41,29 @@ describe("buildRuntimeInstructions", () => {
     );
     assert.include(instructions, "Never wait with sleep");
     assert.include(instructions, "call unwatch_pull_request");
+  });
+
+  it("injects a bounded agents kernel only when provided", () => {
+    const baseline = buildRuntimeInstructions({ harness: "Antigravity" });
+    assert.notInclude(baseline, "<agents_kernel>");
+    assert.strictEqual(
+      buildRuntimeInstructions({ harness: "Antigravity", agentsKernel: "   \n  " }),
+      baseline,
+    );
+
+    const withKernel = buildRuntimeInstructions({
+      harness: "Antigravity",
+      agentsKernel: "# Global Kernel\nFollow rails conventions.",
+    });
+    assert.include(
+      withKernel,
+      "<agents_kernel>\n# Global Kernel\nFollow rails conventions.\n</agents_kernel>",
+    );
+
+    const oversized = `🦊${"a".repeat(MAX_AGENTS_KERNEL_BYTES * 2)}`;
+    const bounded = boundAgentsKernel(oversized);
+    assert.isDefined(bounded);
+    assert.isAtMost(Buffer.byteLength(bounded!, "utf8"), MAX_AGENTS_KERNEL_BYTES);
+    assert.include(bounded!, "... [truncated]");
   });
 });

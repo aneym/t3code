@@ -111,7 +111,10 @@ import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
-import { buildCodexAdditionalContext } from "../../provider/CodexDeveloperInstructions.ts";
+import {
+  buildCodexAdditionalContext,
+  resolveCodexAgentsKernel,
+} from "../../provider/CodexDeveloperInstructions.ts";
 import {
   describeMcpElicitation,
   toMcpElicitationResponse,
@@ -694,6 +697,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     /** ChatGPT token sharing does not accept service tiers. */
     readonly omitServiceTier?: boolean;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
+    readonly agentsKernel?: string;
   }) {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
     const approvalPolicy =
@@ -723,13 +727,24 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     const t3Context =
       input.hasT3Mcp === true
         ? buildCodexAdditionalContext(
-            { model: input.modelSelection.model, reasoningEffort: effort ?? undefined },
+            {
+              model: input.modelSelection.model,
+              reasoningEffort: effort ?? undefined,
+              ...(input.agentsKernel ? { agentsKernel: input.agentsKernel } : {}),
+            },
             {
               browser: input.browserToolsAvailable ?? true,
               device: input.deviceToolsAvailable ?? false,
             },
           )
-        : undefined;
+        : input.agentsKernel
+          ? {
+              t3_code_agents_kernel: {
+                kind: "application" as const,
+                value: `<agents_kernel>\n${input.agentsKernel}\n</agents_kernel>`,
+              },
+            }
+          : undefined;
     const additionalContext =
       t3Context === undefined && Object.keys(appContext).length === 0
         ? undefined
@@ -1539,17 +1554,20 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
     ),
   );
 
+  const hostHome = yield* HostProcess.HomeDirectory;
+  const mergedEnvironment = yield* mergeProviderInstanceEnvironment(environment, hostEnvironment);
+  const pathService = yield* Path.Path;
   const settings = {
     ...config,
     enabled,
-    binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
+    binaryPath: expandHomePath(config.binaryPath, hostHome),
     homePath: homeLayout.effectiveHomePath ?? "",
   } satisfies CodexSettings;
 
   return yield* makeCodexAdapterV2({
     instanceId,
     settings,
-    environment: yield* mergeProviderInstanceEnvironment(environment, hostEnvironment),
+    environment: mergedEnvironment,
     environmentId,
     clientFactory,
     crypto,
@@ -1557,6 +1575,16 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
     idAllocator,
     serverConfig,
     continuationRequests,
+    resolveAgentsKernel: ({ cwd }) =>
+      resolveCodexAgentsKernel({
+        cwd,
+        userHome: mergedEnvironment.HOME?.trim() || hostHome,
+        codexHome: homeLayout.effectiveHomePath ?? "",
+        environment: mergedEnvironment,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, pathService),
+      ),
     ...hooks,
   });
 });
@@ -1569,6 +1597,9 @@ export interface CodexAdapterV2Options {
   readonly clientFactory: CodexAppServerClientFactoryShape;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
   readonly resolveRuntime?: Effect.Effect<CodexEffectiveRuntime, ProviderSetupError, Scope.Scope>;
+  readonly resolveAgentsKernel?: (input: {
+    readonly cwd: string | null;
+  }) => Effect.Effect<string | undefined>;
   readonly crypto: Crypto.Crypto;
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
@@ -6499,6 +6530,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ) {
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
+            const agentsKernel =
+              adapterOptions.resolveAgentsKernel === undefined
+                ? undefined
+                : yield* adapterOptions.resolveAgentsKernel({ cwd: turnInput.runtimePolicy.cwd });
             const turnStartParams = yield* buildCodexTurnStartParams({
               nativeThreadId: threadId,
               codexInput,
@@ -6509,6 +6544,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
+              ...(agentsKernel === undefined ? {} : { agentsKernel }),
             });
             yield* Ref.update(pendingRootTurns, (current) => {
               const updated = new Map(current);

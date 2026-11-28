@@ -4,7 +4,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { discoverAntigravitySkills } from "./AntigravitySkills.ts";
+import { MAX_AGENTS_KERNEL_BYTES } from "@t3tools/provider-core/server/runtimeInstructions";
+import { discoverAntigravitySkills, resolveAntigravityAgentsKernel } from "./AntigravitySkills.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const writeSkill = Effect.fn("writeSkill")(function* (directory: string, contents: string) {
@@ -29,39 +30,36 @@ const makeWorkspace = Effect.fn("makeWorkspace")(function* () {
 });
 
 it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
-  it.effect("does not read user skills from a nested project or from ~/.agents", () =>
+  it.effect("discovers canonical user skills from ~/.agents/skills even in nested projects", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const input = yield* makeWorkspace();
       const nested = { ...input, cwd: path.join(input.userHome, "AI", "Projects", "Something") };
-      const skillPath = yield* writeSkill(
+      const reviewPath = yield* writeSkill(
         path.join(input.userHome, ".gemini", "config", "skills", "review"),
         "---\nname: review\ndescription: Review changes.\n---\n",
       );
-      yield* writeSkill(
-        path.join(input.userHome, ".agents", "skills", "ignored"),
-        "---\nname: ignored\n---\n",
+      const canonicalPath = yield* writeSkill(
+        path.join(input.userHome, ".agents", "skills", "canonical"),
+        "---\nname: canonical\ndescription: Canonical skill.\n---\n",
       );
 
-      assert.deepEqual(yield* discoverAntigravitySkills(nested), [
+      assert.deepEqual(yield* discoverAntigravitySkills({ ...nested, environment: {} }), [
+        {
+          name: "canonical",
+          description: "Canonical skill.",
+          path: canonicalPath,
+          scope: "user",
+          enabled: true,
+        },
         {
           name: "review",
           description: "Review changes.",
-          path: skillPath,
+          path: reviewPath,
           scope: "user",
           enabled: true,
         },
       ]);
-      assert.deepEqual(
-        (yield* discoverAntigravitySkills({ ...input, cwd: input.userHome })).map((skill) => [
-          skill.name,
-          skill.scope,
-        ]),
-        [
-          ["ignored", "project"],
-          ["review", "user"],
-        ],
-      );
     }),
   );
 
@@ -310,5 +308,101 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
         assert.equal(result.failure.path, path.join(root, "large-8", "SKILL.md"));
       }
     }),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "honors RAILS_SKILLS_DIR priority and deduplicates symlinks across user roots",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const input = yield* makeWorkspace();
+        const railsDir = path.join(input.userHome, "rails-skills");
+        const agentsDir = path.join(input.userHome, ".agents", "skills");
+        const cliDir = path.join(input.userHome, ".gemini", "antigravity-cli", "skills");
+
+        const railsAlpha = yield* writeSkill(
+          path.join(railsDir, "alpha"),
+          "---\nname: alpha\ndescription: From RAILS_SKILLS_DIR.\n---\n",
+        );
+        yield* writeSkill(
+          path.join(agentsDir, "alpha"),
+          "---\nname: alpha\ndescription: From ~/.agents/skills.\n---\n",
+        );
+        const agentsBeta = yield* writeSkill(
+          path.join(agentsDir, "beta"),
+          "---\nname: beta\ndescription: Shared canonical skill.\n---\n",
+        );
+        yield* fileSystem.makeDirectory(cliDir, { recursive: true });
+        yield* fileSystem.symlink(path.join(agentsDir, "beta"), path.join(cliDir, "beta-alias"));
+
+        const skills = yield* discoverAntigravitySkills({
+          ...input,
+          environment: { RAILS_SKILLS_DIR: railsDir },
+        });
+        assert.deepEqual(skills, [
+          {
+            name: "alpha",
+            description: "From RAILS_SKILLS_DIR.",
+            path: railsAlpha,
+            scope: "user",
+            enabled: true,
+          },
+          {
+            name: "beta",
+            description: "Shared canonical skill.",
+            path: agentsBeta,
+            scope: "user",
+            enabled: true,
+          },
+        ]);
+      }),
+  );
+
+  it.effect(
+    "resolves bounded AGENTS.md kernel with RAILS_AGENTS_KERNEL > ~/.agents > ~/.gemini precedence",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const input = yield* makeWorkspace();
+        const agentsKernel = path.join(input.userHome, ".agents", "AGENTS.md");
+        const geminiKernel = path.join(input.userHome, ".gemini", "AGENTS.md");
+        const overrideKernel = path.join(input.userHome, "override-AGENTS.md");
+        yield* fileSystem.makeDirectory(path.dirname(agentsKernel), { recursive: true });
+        yield* fileSystem.makeDirectory(path.dirname(geminiKernel), { recursive: true });
+        yield* fileSystem.makeDirectory(input.cwd, { recursive: true });
+
+        yield* fileSystem.writeFileString(geminiKernel, "from-gemini");
+        assert.equal(
+          yield* resolveAntigravityAgentsKernel({ ...input, environment: {} }),
+          "from-gemini",
+        );
+
+        yield* fileSystem.writeFileString(agentsKernel, "from-agents");
+        assert.equal(
+          yield* resolveAntigravityAgentsKernel({ ...input, environment: {} }),
+          "from-agents",
+        );
+
+        yield* fileSystem.writeFileString(overrideKernel, "x".repeat(MAX_AGENTS_KERNEL_BYTES * 2));
+        const bounded = yield* resolveAntigravityAgentsKernel({
+          ...input,
+          environment: { RAILS_AGENTS_KERNEL: overrideKernel },
+        });
+        assert.isDefined(bounded);
+        assert.isAtMost(Buffer.byteLength(bounded!, "utf8"), MAX_AGENTS_KERNEL_BYTES);
+
+        // Skip when the selected kernel is already the workspace AGENTS.md.
+        const workspaceAgents = path.join(input.cwd, "AGENTS.md");
+        yield* fileSystem.writeFileString(workspaceAgents, "workspace-kernel");
+        assert.equal(
+          yield* resolveAntigravityAgentsKernel({
+            ...input,
+            environment: { RAILS_AGENTS_KERNEL: workspaceAgents },
+          }),
+          undefined,
+        );
+      }),
   );
 });

@@ -11,6 +11,7 @@ import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { parse as parseYamlDocument } from "yaml";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { resolveRailsSkillsDir } from "./AntigravitySkills.ts";
 
 type ClaudeSkillScope = "user" | "project";
 
@@ -455,14 +456,36 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
 ): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const configDirPath = yield* resolveClaudeConfigDirPath(config, environment ?? process.env, cwd);
+  const hostHome = yield* HostProcess.HomeDirectory;
+  const resolvedEnvironment = environment ?? process.env;
+  const configDirPath = yield* resolveClaudeConfigDirPath(config, resolvedEnvironment, cwd);
   const { skillOverrides, enabledPlugins } = yield* readSkillSettings(
     configDirPath,
     cwd,
-    environment ?? process.env,
+    resolvedEnvironment,
   );
 
+  // Use explicit HOME when passed, host home for default config, or parent of custom config dir for isolated tests.
+  const explicitEnvHome = environment?.HOME?.trim();
+  const userHome =
+    explicitEnvHome ||
+    (config.homePath.trim() === "" && !resolvedEnvironment.CLAUDE_CONFIG_DIR?.trim()
+      ? resolvedEnvironment.HOME?.trim() || hostHome
+      : path.dirname(configDirPath));
+  const railsSkillsDir = resolveRailsSkillsDir(path, resolvedEnvironment, userHome);
+  const readableRailsSkillsDir =
+    railsSkillsDir === undefined
+      ? undefined
+      : (yield* fileSystem.stat(railsSkillsDir).pipe(Effect.orElseSucceed(() => undefined)))
+            ?.type === "Directory"
+        ? railsSkillsDir
+        : undefined;
+
   const roots: ReadonlyArray<ClaudeSkillRoot> = [
+    ...(readableRailsSkillsDir === undefined
+      ? []
+      : [{ directory: readableRailsSkillsDir, scope: "user" as const }]),
+    { directory: path.join(userHome, ".agents", "skills"), scope: "user" },
     { directory: path.join(configDirPath, "skills"), scope: "user" },
     ...(cwd ? [{ directory: path.join(cwd, ".claude", "skills"), scope: "project" as const }] : []),
     ...claudeLaunchArgDirectories(config.launchArgs)
@@ -471,16 +494,22 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         directory: path.join(path.resolve(cwd ?? ".", directory), ".claude", "skills"),
         scope: "project" as const,
       })),
-    ...(yield* discoverPluginSkillRoots(
-      configDirPath,
-      cwd,
-      enabledPlugins,
-      environment ?? process.env,
-    )),
+    ...(yield* discoverPluginSkillRoots(configDirPath, cwd, enabledPlugins, resolvedEnvironment)),
   ];
 
   const skillsByName = new Map<string, ServerProviderSkill>();
+  const seenRealRootPaths = new Set<string>();
+  const seenRealSkillPaths = new Set<string>();
   for (const root of roots) {
+    if (root.prefix === undefined) {
+      const realRoot = yield* fileSystem
+        .realPath(root.directory)
+        .pipe(Effect.orElseSucceed(() => undefined));
+      if (realRoot !== undefined) {
+        if (seenRealRootPaths.has(realRoot)) continue;
+        seenRealRootPaths.add(realRoot);
+      }
+    }
     const singleSkill =
       root.prefix !== undefined &&
       (yield* fileSystem
@@ -496,6 +525,12 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
       const skillPath = singleSkill
         ? path.join(root.directory, "SKILL.md")
         : path.join(root.directory, entry, "SKILL.md");
+      const realSkillPath = yield* fileSystem
+        .realPath(skillPath)
+        .pipe(Effect.orElseSucceed(() => undefined));
+      if (realSkillPath !== undefined && seenRealSkillPaths.has(realSkillPath)) {
+        continue;
+      }
       const contents = yield* fileSystem
         .readFileString(skillPath)
         .pipe(Effect.orElseSucceed(() => undefined));
@@ -527,6 +562,9 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         continue;
       }
 
+      if (realSkillPath !== undefined) {
+        seenRealSkillPaths.add(realSkillPath);
+      }
       const override = root.prefix ? undefined : skillOverrides.get(name);
       const userInvocationOnly =
         (frontmatter.kind === "parsed" && frontmatter.userInvocationOnly === true) ||

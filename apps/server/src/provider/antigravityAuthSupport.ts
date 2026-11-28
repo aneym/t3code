@@ -21,6 +21,7 @@ import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSession
 import {
   antigravityUserSkillDirectories,
   resolveAntigravityUserHome,
+  resolveRailsSkillsDir,
 } from "./Drivers/AntigravitySkills.ts";
 
 export const ANTIGRAVITY_AUTH_STDOUT_PREFIX =
@@ -230,43 +231,170 @@ function antigravityEnvironment(
   };
 }
 
-/** Private GEMINI_HOME isolates credentials/hooks/MCP; link global skills from the real ~/.gemini. */
+const isReadableDirectory = Effect.fnUntraced(function* (
+  fs: FileSystem.FileSystem,
+  directory: string,
+) {
+  const info = yield* fs.stat(directory).pipe(Effect.orElseSucceed(() => undefined));
+  if (info?.type !== "Directory") return false;
+  return yield* fs.readDirectory(directory).pipe(
+    Effect.as(true),
+    Effect.orElseSucceed(() => false),
+  );
+});
+
+const ensureDirectorySymlink = Effect.fnUntraced(function* (input: {
+  readonly fs: FileSystem.FileSystem;
+  readonly path: Path.Path;
+  readonly link: string;
+  readonly target: string;
+  readonly platform: NodeJS.Platform;
+}) {
+  const linkStat = yield* Effect.tryPromise(() => NodeFSP.lstat(input.link)).pipe(
+    Effect.orElseSucceed(() => undefined),
+  );
+  if (linkStat !== undefined) {
+    if (!linkStat.isSymbolicLink()) return;
+    const existing = yield* input.fs
+      .readLink(input.link)
+      .pipe(Effect.map((value) => input.path.resolve(input.path.dirname(input.link), value)));
+    if (existing === input.target) return;
+    yield* input.fs.remove(input.link);
+  }
+  yield* input.fs.makeDirectory(input.path.dirname(input.link), { recursive: true });
+  yield* Effect.tryPromise(() =>
+    NodeFSP.symlink(input.target, input.link, input.platform === "win32" ? "junction" : "dir"),
+  );
+});
+
+/** Mount real canonical skill directories into private GEMINI_HOME without stub files. */
 const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(function* (input: {
   readonly profileDirectory: string;
   readonly userHome: string;
   readonly platform: NodeJS.Platform;
+  readonly baseEnv: NodeJS.ProcessEnv;
 }): Effect.fn.Return<void, never, FileSystem.FileSystem | Path.Path> {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const links = antigravityUserSkillDirectories(path, input.profileDirectory);
-  const targets = antigravityUserSkillDirectories(path, path.join(input.userHome, ".gemini"));
-  for (const [link, target] of [
-    [links[0], targets[0]],
-    [links[1], targets[1]],
-  ] as const) {
-    yield* Effect.gen(function* () {
-      const existing = yield* fs.readLink(link).pipe(
-        Effect.map((value): string | undefined => path.resolve(path.dirname(link), value)),
-        Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined),
-      );
-      if (existing === target) return;
-      if (existing !== undefined) {
-        yield* fs.remove(link);
-      }
-      yield* fs.makeDirectory(path.dirname(link), { recursive: true });
-      yield* Effect.tryPromise(() =>
-        NodeFSP.symlink(target, link, input.platform === "win32" ? "junction" : "dir"),
-      );
-    }).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("Antigravity user skills are not linked into the profile.", {
-          link,
-          target,
-          error,
-        }),
-      ),
+  const [configLink, cliLink] = antigravityUserSkillDirectories(path, input.profileDirectory);
+  const [configTarget, cliTarget] = antigravityUserSkillDirectories(
+    path,
+    path.join(input.userHome, ".gemini"),
+  );
+
+  yield* ensureDirectorySymlink({
+    fs,
+    path,
+    link: configLink,
+    target: configTarget,
+    platform: input.platform,
+  }).pipe(
+    Effect.catch((error) =>
+      Effect.logWarning("Antigravity config skills are not linked into the profile.", {
+        link: configLink,
+        target: configTarget,
+        error,
+      }),
+    ),
+  );
+
+  yield* Effect.gen(function* () {
+    const railsDir = resolveRailsSkillsDir(path, input.baseEnv, input.userHome);
+    if (railsDir !== undefined && (yield* isReadableDirectory(fs, railsDir))) {
+      yield* ensureDirectorySymlink({
+        fs,
+        path,
+        link: cliLink,
+        target: railsDir,
+        platform: input.platform,
+      });
+      return;
+    }
+
+    const agentsSkillsDir = path.join(input.userHome, ".agents", "skills");
+    const hasAgentsSkills = yield* isReadableDirectory(fs, agentsSkillsDir);
+    if (!hasAgentsSkills) {
+      yield* ensureDirectorySymlink({
+        fs,
+        path,
+        link: cliLink,
+        target: cliTarget,
+        platform: input.platform,
+      });
+      return;
+    }
+
+    const hasCliSkills = yield* isReadableDirectory(fs, cliTarget);
+    const realAgents = yield* fs
+      .realPath(agentsSkillsDir)
+      .pipe(Effect.orElseSucceed(() => undefined));
+    const realCli = hasCliSkills
+      ? yield* fs.realPath(cliTarget).pipe(Effect.orElseSucceed(() => undefined))
+      : undefined;
+    if (!hasCliSkills || (realAgents !== undefined && realAgents === realCli)) {
+      yield* ensureDirectorySymlink({
+        fs,
+        path,
+        link: cliLink,
+        target: agentsSkillsDir,
+        platform: input.platform,
+      });
+      return;
+    }
+
+    const existingLinkStat = yield* Effect.tryPromise(() => NodeFSP.lstat(cliLink)).pipe(
+      Effect.orElseSucceed(() => undefined),
     );
-  }
+    if (existingLinkStat !== undefined && !existingLinkStat.isDirectory()) {
+      yield* fs.remove(cliLink, { recursive: true });
+    }
+    yield* fs.makeDirectory(cliLink, { recursive: true });
+
+    const desiredByName = new Map<string, string>();
+    const seenRealTargets = new Set<string>();
+    for (const sourceRoot of [agentsSkillsDir, cliTarget]) {
+      const entries = yield* fs
+        .readDirectory(sourceRoot)
+        .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+      for (const entry of [...entries].sort()) {
+        if (desiredByName.has(entry)) continue;
+        const candidate = path.join(sourceRoot, entry);
+        const info = yield* fs.stat(candidate).pipe(Effect.orElseSucceed(() => undefined));
+        if (info?.type !== "Directory") continue;
+        const realCandidate = yield* fs
+          .realPath(candidate)
+          .pipe(Effect.orElseSucceed(() => candidate));
+        if (seenRealTargets.has(realCandidate)) continue;
+        seenRealTargets.add(realCandidate);
+        desiredByName.set(entry, realCandidate);
+      }
+    }
+
+    const currentEntries = yield* fs
+      .readDirectory(cliLink)
+      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    for (const entry of currentEntries) {
+      if (!desiredByName.has(entry)) {
+        yield* fs.remove(path.join(cliLink, entry), { recursive: true });
+      }
+    }
+    for (const [entry, target] of desiredByName) {
+      yield* ensureDirectorySymlink({
+        fs,
+        path,
+        link: path.join(cliLink, entry),
+        target,
+        platform: input.platform,
+      });
+    }
+  }).pipe(
+    Effect.catch((error) =>
+      Effect.logWarning("Antigravity user skills are not linked into the profile.", {
+        link: cliLink,
+        error,
+      }),
+    ),
+  );
 });
 
 export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(function* (input: {
@@ -415,7 +543,12 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
         authSupportError("The Antigravity profile settings could not be written."),
       ),
     );
-  yield* linkAntigravityUserSkills({ profileDirectory: geminiHome, userHome, platform });
+  yield* linkAntigravityUserSkills({
+    profileDirectory: geminiHome,
+    userHome,
+    platform,
+    baseEnv: input.baseEnv ?? process.env,
+  });
   return profile;
 });
 

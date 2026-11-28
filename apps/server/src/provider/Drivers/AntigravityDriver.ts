@@ -427,6 +427,8 @@ export const AntigravityDriver: ProviderDriver<
       makeRuntime,
       withProcess: authFlow.withProcess,
       defaultModel,
+      userHome,
+      environment: processEnvironment,
       onSessionStarted: provider.onSessionStarted,
       onSessionEvent: (event) => {
         if (event._tag === "ConfigOptionsUpdated") {
@@ -513,7 +515,7 @@ export const AntigravityDriver: ProviderDriver<
       snapshotForCwd: (cwd) =>
         !enabled
           ? provider.snapshot.getSnapshot
-          : discoverAntigravitySkills({ cwd, userHome }).pipe(
+          : discoverAntigravitySkills({ cwd, userHome, environment: processEnvironment }).pipe(
               Effect.provideService(FileSystem.FileSystem, fileSystem),
               Effect.provideService(Path.Path, path),
               Effect.flatMap((skills) => provider.snapshotForCwd(cwd, skills)),

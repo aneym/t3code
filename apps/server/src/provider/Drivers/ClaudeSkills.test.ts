@@ -4,6 +4,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+
 import { discoverClaudeSkills } from "./ClaudeSkills.ts";
 import { planClaudeSkillDispatch } from "./ClaudeSkillDispatch.ts";
 
@@ -869,5 +871,58 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         ],
       );
     }),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "honors RAILS_SKILLS_DIR and scans ~/.agents/skills while deduplicating ~/.claude/skills symlinks",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-rails-skills-" });
+        const userHome = path.join(tempDir, "home");
+        const claudeDir = path.join(userHome, ".claude");
+        const agentsSkills = path.join(userHome, ".agents", "skills");
+        const railsSkills = path.join(tempDir, "rails-skills");
+
+        yield* writeSkill(railsSkills, "alpha", "---\ndescription: From RAILS_SKILLS_DIR\n---\n");
+        yield* writeSkill(agentsSkills, "alpha", "---\ndescription: From ~/.agents/skills\n---\n");
+        yield* writeSkill(agentsSkills, "beta", "---\ndescription: Canonical beta\n---\n");
+        const railsAlpha = path.join(railsSkills, "alpha", "SKILL.md");
+        const agentsBeta = path.join(agentsSkills, "beta", "SKILL.md");
+        yield* fs.makeDirectory(path.join(claudeDir, "skills"), { recursive: true });
+        yield* fs.symlink(
+          path.join(agentsSkills, "beta"),
+          path.join(claudeDir, "skills", "beta-link"),
+        );
+
+        const skills = yield* discoverClaudeSkills({ homePath: claudeDir }, undefined, {
+          HOME: userHome,
+          RAILS_SKILLS_DIR: railsSkills,
+        });
+
+        assert.deepEqual(
+          skills.map((skill) => ({
+            name: skill.name,
+            path: skill.path,
+            description: skill.description,
+            scope: skill.scope,
+          })),
+          [
+            {
+              name: "alpha",
+              path: railsAlpha,
+              description: "From RAILS_SKILLS_DIR",
+              scope: "user",
+            },
+            {
+              name: "beta",
+              path: agentsBeta,
+              description: "Canonical beta",
+              scope: "user",
+            },
+          ],
+        );
+      }),
   );
 });
