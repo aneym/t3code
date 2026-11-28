@@ -9,6 +9,9 @@ import { Button } from "../ui/button";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
 import { McpAppFrame } from "./McpAppFrame";
+import { InlineCardView } from "../../vendor/rails-inline-card/card-view";
+import "../../vendor/rails-inline-card/inline-card.css";
+import { useOpenLink } from "../../browser/useOpenLink";
 import { checkpointFileTotals } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { useFileContextMenuHandler } from "../../fileContextMenu";
@@ -265,7 +268,27 @@ export function HtmlRenderTimelineRow({
   );
 }
 
+function RailsCardRow({
+  card,
+}: {
+  card: NonNullable<Extract<TimelineRow, { kind: "mcp-app" }>["card"]>;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const openLink = useOpenLink(ctx.threadRef);
+  const host = { open: (url: string) => void openLink(url).catch((error) => console.error(error)) };
+  return (
+    <div className="min-w-0 px-1">
+      <InlineCardView card={card} host={host} />
+    </div>
+  );
+}
+
 export function McpAppTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mcp-app" }> }) {
+  if (row.card) return <RailsCardRow card={row.card} />;
+  return <McpAppFrameRow row={row} />;
+}
+
+function McpAppFrameRow({ row }: { row: Extract<TimelineRow, { kind: "mcp-app" }> }) {
   const ctx = use(TimelineRowCtx);
   const { awaitingUser } = use(TimelineRowActivityCtx);
 

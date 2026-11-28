@@ -174,6 +174,8 @@ export default defineConfig({
       "apps/mobile/android/**",
       "apps/mobile/ios/**",
       "apps/mobile/uniwind-types.d.ts",
+      // Vendored from rails-one; UPSTREAM.json holds the source hashes.
+      "apps/web/src/vendor/rails-inline-card/**",
       // Vendored and generated C.
       "apps/mobile/modules/t3-highlights/Vendor/**",
       "apps/mobile/modules/t3-highlights/cpp/generated/**",
@@ -194,6 +196,7 @@ export default defineConfig({
       ".repos",
       ".repos/**",
       "infra/task-cache/vendor/**",
+      "apps/web/src/vendor/rails-inline-card/**",
       "dist",
       "dist-electron",
       "node_modules",

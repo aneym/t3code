@@ -65,6 +65,7 @@ import { resolveT3McpToolDefinition } from "@t3tools/shared/t3McpToolPresentatio
 import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
 import { htmlRenderReferencesEqual, type HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { mcpAppReferencesEqual, type McpAppReference } from "@t3tools/shared/mcpApp";
+import type { InlineCard } from "../../vendor/rails-inline-card/inline-card";
 import { dynamicToolTitle } from "@t3tools/shared/toolActivity";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import {
@@ -632,6 +633,7 @@ type MessagesTimelineRowContent =
       itemId: TurnItemId;
       revision: string;
       mcpApp: McpAppReference;
+      card?: InlineCard;
     };
 
 export interface StableMessagesTimelineRowsState {
@@ -1961,6 +1963,7 @@ export function deriveMessagesTimelineRows(input: {
         itemId: timelineEntry.itemId,
         revision: timelineEntry.revision,
         mcpApp: timelineEntry.mcpApp,
+        ...(timelineEntry.card ? { card: timelineEntry.card } : {}),
       });
       continue;
     }

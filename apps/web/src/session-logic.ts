@@ -27,6 +27,7 @@ import {
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import type { McpAppReference } from "@t3tools/shared/mcpApp";
+import { type InlineCard, readCard } from "./vendor/rails-inline-card/inline-card";
 import { htmlRenderFromToolItem, mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
 import {
   contextCompactionLabel,
@@ -143,6 +144,7 @@ export type TimelineEntry = (
       readonly itemId: TurnItemId;
       readonly revision: string;
       readonly mcpApp: McpAppReference;
+      readonly card?: InlineCard;
     }
   | {
       readonly id: string;
@@ -714,7 +716,9 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
 
     const mcpApp = item.type === "dynamic_tool" ? mcpAppFromToolItem(item) : undefined;
     if (mcpApp !== undefined) {
+      const card = item.type === "dynamic_tool" ? railsCardOf(mcpApp, item.input) : undefined;
       entries.push({
+        ...(card ? { card } : {}),
         id: item.id,
         kind: "mcp-app",
         createdAt,
@@ -1146,3 +1150,9 @@ export function deriveCanInterruptRunningThread(
 }
 
 export type { TurnDiffSummary };
+
+function railsCardOf(app: McpAppReference, input: unknown): InlineCard | undefined {
+  if (app.tool !== "chat_show" || input === null || typeof input !== "object") return undefined;
+  const read = readCard((input as { readonly card?: unknown }).card);
+  return read.ok ? read.card : undefined;
+}

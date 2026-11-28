@@ -1,0 +1,23 @@
+{
+  "repo": "rails-one",
+  "commit": "b1defd7b17293134afdcb2b9cbc5beebc86543ed",
+  "files": {
+    "inline-card.ts": {
+      "source": "shared/inline-card.ts",
+      "sha256": "3cb4c3b0c7bd0208c583fc44bba30abee15d053011e1a833e517fcb2ebad79d8"
+    },
+    "card-data.tsx": {
+      "source": "web/src/inline-card/card-data.tsx",
+      "sha256": "1ac59b12d84c5c1289a68ba0a02cc213836e22976a982071b9854875036859c3"
+    },
+    "card-view.tsx": {
+      "source": "web/src/inline-card/card-view.tsx",
+      "sha256": "aa4ae623fcb78cb4441005dfbc8a7c960b6eae836b508148e2801b2762f01fd5"
+    },
+    "inline-card.css": {
+      "source": "web/src/inline-card/inline-card.css",
+      "sha256": "8156b1c6505346f3146d76c91ed3156821f98e2c7acd1a53536c02011394303b"
+    }
+  },
+  "transform": "import \"../../../shared/inline-card\" becomes \"./inline-card\" in card-data.tsx and card-view.tsx"
+}
